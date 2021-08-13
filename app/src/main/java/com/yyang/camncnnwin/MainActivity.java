@@ -50,8 +50,6 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
         super.onCreate(savedInstanceState);
         _saved_instance  = this;
 
-        NetworkInit(getAssets());
-
         setImmersiveSticky();
         View decor_view = getWindow().getDecorView();
         decor_view.setOnSystemUiVisibilityChangeListener(new View.OnSystemUiVisibilityChangeListener() {
@@ -138,7 +136,7 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
     {
         if(!isCamera2Device())
         {
-            Log.e(DBG_TAG, "found legacy camera Device, this demo needs camera2 device");
+            Log.e(DBG_TAG, "found legacy camera device, this demo needs camera2 device");
             return;
         }
 
@@ -241,6 +239,7 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
                         @Override
                         public void onClick(View v)
                         {
+                            NetworkInit(getAssets());
                             NetworkDetect();
                             _ncnn_result_textview.setText("detect result: null");
                         }

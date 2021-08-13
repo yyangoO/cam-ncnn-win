@@ -512,6 +512,12 @@ public:
      */
     ANativeWindow* get_native_window(void);
     /**
+     * @brief get the image's resolution
+     * get image's resolution
+     * @return      the image format
+     */
+    ImageFormat get_img_res(void);
+    /**
      * @brief get next image
      * get next image
      * @return      the image pointer
@@ -573,10 +579,16 @@ public:
 class NcnnNet
 {
 private:
-    ncnn::Net* _network;        ///< the yolov5 network
-    bool _net_param_ready_flag; ///< network parameter ready flag
-    bool _net_model_ready_flag; ///< network model ready flag
-    bool _use_vkimagemat_flag;  ///< is the ncnn gpu device use VkImageMat enstore the data, if false, use VkMat
+    ncnn::Net* _network;                                                ///< the network
+    bool _net_param_ready_flag;                                         ///< network parameter ready flag
+    bool _net_model_ready_flag;                                         ///< network model ready flag
+    bool _use_vkimagemat_flag;                                          ///< is the ncnn gpu device use VkImageMat enstore the data, if false, use VkMat
+    int _default_gpu_index;                                             ///< default gpu index
+    ncnn::VulkanDevice* _vkdev;                                         ///< vulkan device
+    ncnn::VkCompute* _cmd;                                              ///< vulkan command
+    AHardwareBuffer_Desc _hb_desc;                                      ///< android hardwarebuffer descriptor
+    AHardwareBuffer* _hb;                                               ///< android hardwarebuffer
+    ncnn::VkAndroidHardwareBufferImageAllocator* _vk_ahbi_allocator;    ///< android vulkan hardwarebuffer allocator
 
 public:
     /**
@@ -589,6 +601,12 @@ public:
      * destruction function
      */
     ~NcnnNet(void);
+    /**
+     * @brief initialize the android hardwarebuffer
+     * initialize the android hardwarebuffer
+     * @param yuv_reader        the image raeder point
+     */
+    void init_hardwarebuffer(ImageReader* yuv_reader);
     /**
      * @brief load parameter
      * load parameter
@@ -612,8 +630,9 @@ public:
     /**
      * @brief detection
      * detection function
+     * @param flag      detect if true, not detect if false
      */
-    void detect(void);
+    void detect(bool flag);
 };
 
 
@@ -625,7 +644,7 @@ class AppEngine
 {
 private:
     struct android_app* _app;           ///< android app pointer
-    ImageFormat _saved_native_win_res;  ///< saved native window
+    ImageFormat _native_win_res;        ///< saved native window
     bool _cam_granted_flag;             ///< granted camera
     int _rotation;                      ///< rotation
     volatile bool _cam_ready_flag;      ///< camera ready flag
@@ -689,6 +708,11 @@ public:
      */
     void draw_frame(void);
     /**
+     * @brief initialize the ncnn network
+     * initialize the ncnn network
+     */
+    void on_app_init_ncnn(void);
+    /**
      * @brief handle android app's request
      * configure the changes
      */
@@ -699,31 +723,31 @@ public:
      */
     void on_app_term_window(void);
     /**
-     * @brief get the saved native window width
-     * get the saved native window width
+     * @brief get the native window width
+     * get the native window width
      * @return      the width
      */
-    int32_t get_saved_native_win_width(void);
+    int32_t get_native_win_width(void);
     /**
-     * @brief get the saved native window height
-     * get the saved native window height
+     * @brief get the native window height
+     * get the native window height
      * @return      the height
      */
-    int32_t get_saved_native_win_height(void);
+    int32_t get_native_win_height(void);
     /**
-     * @brief get the saved native window format
-     * get the saved native window format
+     * @brief get the native window format
+     * get the native window format
      * @return      the format
      */
-    int32_t get_saved_native_win_format(void);
+    int32_t get_native_win_format(void);
     /**
-     * @brief save the native window resource
-     * save the native window's width, height , format
+     * @brief get the native window resource
+     * get the native window's width, height , format
      * @param w         width
      * @param h         height
      * @param format    the format
      */
-    void save_native_win_res(int32_t w, int32_t h, int32_t format);
+    void set_native_win_res(int32_t w, int32_t h, int32_t format);
     /**
      * @brief request camera permissin
      * request camera permissin

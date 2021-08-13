@@ -1,11 +1,11 @@
 #----------------------------------------------------------------
-# Generated CMake target import file for configuration "Release".
+# Generated CMake target import file for configuration "release".
 #----------------------------------------------------------------
 
 # Commands may need to know the format version.
 set(CMAKE_IMPORT_FILE_VERSION 1)
 
-# Import target "SPIRV" for configuration "Release"
+# Import target "SPIRV" for configuration "release"
 set_property(TARGET SPIRV APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
 set_target_properties(SPIRV PROPERTIES
   IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "CXX"

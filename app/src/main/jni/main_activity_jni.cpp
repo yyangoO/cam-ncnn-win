@@ -709,7 +709,7 @@ void NDKCamera::start_preview(bool start)
     }
     else
     {
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "Conflict states(%s, %d)", (start ? "true" : "false"), this->_capture_session_state);
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "conflict states(%s, %d)", (start ? "true" : "false"), this->_capture_session_state);
     }
 }
 
@@ -853,13 +853,44 @@ ANativeWindow *ImageReader::get_native_window(void)
     return native_window;
 }
 
-AImage *ImageReader::get_next_img(void)
+ImageFormat ImageReader::get_img_res(void)
+{
+    media_status_t status = AMEDIA_OK;
+
+    ImageFormat img_fmt;
+    int32_t width = 0;
+    int32_t height = 0;
+    int32_t format = 0;
+
+    status = AImageReader_getWidth(this->_reader, &width);
+    if (status != AMEDIA_OK)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "could not get image format");
+    status = AImageReader_getHeight(this->_reader, &height);
+    if (status != AMEDIA_OK)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "could not get image format");
+    status = AImageReader_getFormat(this->_reader, &format);
+    if (status != AMEDIA_OK)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "could not get image format");
+
+    if (format != AIMAGE_FORMAT_YUV_420_888)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "failed to get format");
+
+    img_fmt.width = width;
+    img_fmt.height = height;
+    img_fmt.format = format;
+
+    return img_fmt;
+}
+
+AImage* ImageReader::get_next_img(void)
 {
     media_status_t status = AMEDIA_OK;
 
     AImage *image;
     status = AImageReader_acquireNextImage(this->_reader, &image);
-    if (status != AMEDIA_OK) {
+    if (status != AMEDIA_OK)
+    {
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "could not get next image");
         return nullptr;
     }
 
@@ -896,17 +927,14 @@ bool ImageReader::display_image(ANativeWindow_Buffer *buf, AImage *img)
 
     int32_t src_format = -1;
     AImage_getFormat(img, &src_format);
+
     if (src_format != AIMAGE_FORMAT_YUV_420_888)
-    {
         __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "failed to get format");
-    }
 
     int32_t src_planes = 0;
     AImage_getNumberOfPlanes(img, &src_planes);
     if (src_planes != 3)
-    {
         __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "it's not 3 planes");
-    }
 
     switch (this->_present_rotation)
     {
@@ -1107,18 +1135,64 @@ NcnnNet::NcnnNet(void)
     : _network(nullptr),
       _net_param_ready_flag(false),
       _net_model_ready_flag(false),
-      _use_vkimagemat_flag(true)
+      _use_vkimagemat_flag(true),
+      _default_gpu_index(0),
+      _vkdev(nullptr),
+      _cmd(nullptr),
+      _hb(nullptr),
+      _vk_ahbi_allocator(nullptr)
 {
     // initialize ncnn gpu instance
     ncnn::create_gpu_instance();
 
-    //
+    // initialize the ncnn network
+    _network = new ncnn::Net();
+
+    // get ncnn vulkan gpu device
+    this->_default_gpu_index = ncnn::get_default_gpu_index();
+    this->_vkdev = ncnn::get_gpu_device();
+    this->_cmd = new ncnn::VkCompute(this->_vkdev);
+
+    // get the vulkan alloctor
+    ncnn::VkAllocator* blob_vkallocator = this->_vkdev->acquire_blob_allocator();
+    ncnn::VkAllocator* staging_vkallocator = this->_vkdev->acquire_staging_allocator();
+
+    // make the options
+    ncnn::Option opt;
+    opt.blob_vkallocator = blob_vkallocator;
+    opt.workspace_vkallocator = blob_vkallocator;
+    opt.staging_vkallocator = staging_vkallocator;
+    if (ncnn::get_gpu_count() != 0)
+        opt.use_vulkan_compute = true;
+    else
+    {
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "no vulkan device found! ");
+        return;
+    }
+    this->_network->opt = opt;
 }
 
-NcnnNet::~NcnnNet(void)
+void NcnnNet::init_hardwarebuffer(ImageReader* yuv_reader)
 {
-    // distory ncnn gpu instance
-    ncnn::destroy_gpu_instance();
+    int ret = -1;
+
+    // initialize the android hardwarebuffer
+    this->_hb_desc.width = yuv_reader->get_img_res().width;
+    this->_hb_desc.height = yuv_reader->get_img_res().height;
+    this->_hb_desc.format = yuv_reader->get_img_res().format;
+    this->_hb_desc.rfu0 = 0;
+    this->_hb_desc.rfu1 = 0;
+    this->_hb_desc.layers = 1;
+    this->_hb_desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+
+    ret = AHardwareBuffer_allocate(&this->_hb_desc, &this->_hb);
+    if (ret < 0)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "can't allocate android hardwarebuffer %d", ret);
+
+
+
+//     initalize the android vulkan allocator
+//    this->_vk_ahbi_allocator = new ncnn::VkAndroidHardwareBufferImageAllocator(this->_vkdev, this->_hb);
 }
 
 void NcnnNet::load_param(AAssetManager *mgr, const char* name)
@@ -1159,6 +1233,21 @@ void NcnnNet::update_vk_type(bool vkimagemat_flag)
         this->_use_vkimagemat_flag = false;
 }
 
+void NcnnNet::detect(bool flag)
+{
+    // check parameter and model
+    if (!this->_net_param_ready_flag || !this->_net_model_ready_flag)
+    {
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "didn't load the network's parameter or model yet! ");
+    }
+}
+
+NcnnNet::~NcnnNet(void)
+{
+    // distory ncnn gpu instance
+    ncnn::destroy_gpu_instance();
+}
+
 
 /*----------------------------------------------------------------------------------------------------------*/
 /*----------------------------------------------camera engine-----------------------------------------------*/
@@ -1175,10 +1264,7 @@ AppEngine::AppEngine(android_app* app)
           _ncnn_detect_flag(false)
 {
     // get the memory to set the native window resolution
-    memset(&this->_saved_native_win_res, 0, sizeof(this->_saved_native_win_res));
-
-    // initialize the yolov5 ncnn network
-    this->_ncnn_net = new NcnnNet();
+    memset(&this->_native_win_res, 0, sizeof(this->_native_win_res));
 }
 
 struct android_app* AppEngine::interface_4_android_app(void) const
@@ -1188,8 +1274,8 @@ struct android_app* AppEngine::interface_4_android_app(void) const
 
 void AppEngine::interface_2_aasset_mgr(AAssetManager* mgr)
 {
-    this->_ncnn_net->load_param(mgr, "yolov5s.param");
-    this->_ncnn_net->load_model(mgr, "yolov5s.bin");
+    this->_ncnn_net->load_param(mgr, "squeezenet_v1.1.param");
+    this->_ncnn_net->load_model(mgr, "squeezenet_v1.1.bin");
 }
 
 void AppEngine::interface_2_ncnn_vktype(bool vkimagemat_flag)
@@ -1208,9 +1294,7 @@ void AppEngine::interface_2_ncnn_detectflag(void)
 void AppEngine::request_cam_permission(void)
 {
     if (!this->_app)
-    {
         return;
-    }
 
     JNIEnv* env;
     ANativeActivity* activity = this->_app->activity;
@@ -1266,7 +1350,7 @@ void AppEngine::create_cam(void)
     this->_cam->match_capture_size_request(this->_app->window, &view, &capture);
 
     // request the necessary native window to OS
-    bool portrait_nativewindow_flag = (this->_saved_native_win_res.width < this->_saved_native_win_res.height);
+    bool portrait_nativewindow_flag = (this->_native_win_res.width < this->_native_win_res.height);
 
     ANativeWindow_setBuffersGeometry(this->_app->window,
                                      portrait_nativewindow_flag ? view.height : view.width,
@@ -1286,14 +1370,11 @@ void AppEngine::create_cam(void)
 void AppEngine::draw_frame(void)
 {
     if (!this->_cam_ready_flag || !this->_yuv_reader)
-    {
         return;
-    }
 
     AImage* image = this->_yuv_reader->get_next_img();
-    if (!image) {
+    if (!image)
         return;
-    }
 
     ANativeWindow_acquire(this->_app->window);
     ANativeWindow_Buffer buf;
@@ -1301,6 +1382,7 @@ void AppEngine::draw_frame(void)
     if (ANativeWindow_lock(this->_app->window, &buf, nullptr) < 0)
     {
         this->_yuv_reader->delete_img(image);
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "native window lock error! ");
         return;
     }
 
@@ -1347,37 +1429,38 @@ void AppEngine::delete_cam(void)
     }
 }
 
-int32_t AppEngine::get_saved_native_win_width(void)
+int32_t AppEngine::get_native_win_width(void)
 {
-    return this->_saved_native_win_res.width;
+    return this->_native_win_res.width;
 }
 
-int32_t AppEngine::get_saved_native_win_height(void)
+int32_t AppEngine::get_native_win_height(void)
 {
-    return this->_saved_native_win_res.height;
+    return this->_native_win_res.height;
 }
 
-int32_t AppEngine::get_saved_native_win_format(void)
+int32_t AppEngine::get_native_win_format(void)
 {
-    return this->_saved_native_win_res.format;
+    return this->_native_win_res.format;
 }
 
-void AppEngine::save_native_win_res(int32_t w, int32_t h, int32_t format)
+void AppEngine::set_native_win_res(int32_t w, int32_t h, int32_t format)
 {
-    this->_saved_native_win_res.width = w;
-    this->_saved_native_win_res.height = h;
-    this->_saved_native_win_res.format = format;
+    this->_native_win_res.width = w;
+    this->_native_win_res.height = h;
+    this->_native_win_res.format = format;
 }
 
 void AppEngine::on_app_init_window(void)
 {
     if (!this->_cam_granted_flag)
     {
-        // not permitted to use camera yet, ask(again) and defer other events
+        // not permitted to use camera yet, ask again
         this->request_cam_permission();
     }
 
     this->_rotation = this->get_display_rotation();
+
     this->create_cam();
 
     this->enable_ui();
@@ -1385,6 +1468,13 @@ void AppEngine::on_app_init_window(void)
     // native activity is ready to display, start pulling images
     this->_cam_ready_flag = true;
     this->_cam->start_preview(true);
+}
+
+void AppEngine::on_app_init_ncnn(void)
+{
+    // initialize ncnn network
+    this->_ncnn_net = new NcnnNet();
+    this->_ncnn_net->init_hardwarebuffer(this->_yuv_reader);
 }
 
 void AppEngine::on_app_term_window(void)
@@ -1457,18 +1547,19 @@ static void ProcessAndroidCmd(struct android_app* app, int32_t cmd)
         case APP_CMD_INIT_WINDOW:
             if (engine->interface_4_android_app()->window != NULL)
             {
-                engine->save_native_win_res(ANativeWindow_getWidth(app->window),
-                                            ANativeWindow_getHeight(app->window),
-                                            ANativeWindow_getFormat(app->window));
+                engine->set_native_win_res(ANativeWindow_getWidth(app->window),
+                                           ANativeWindow_getHeight(app->window),
+                                           ANativeWindow_getFormat(app->window));
                 engine->on_app_init_window();
+                engine->on_app_init_ncnn();
             }
             break;
         case APP_CMD_TERM_WINDOW:
             engine->on_app_term_window();
             ANativeWindow_setBuffersGeometry(app->window,
-                                             engine->get_saved_native_win_width(),
-                                             engine->get_saved_native_win_height(),
-                                             engine->get_saved_native_win_format());
+                                             engine->get_native_win_width(),
+                                             engine->get_native_win_height(),
+                                             engine->get_native_win_format());
             break;
         case APP_CMD_CONFIG_CHANGED:
             engine->on_app_config_change();

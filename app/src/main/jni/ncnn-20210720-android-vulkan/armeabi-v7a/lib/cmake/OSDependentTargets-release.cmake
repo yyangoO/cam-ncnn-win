@@ -1,11 +1,11 @@
 #----------------------------------------------------------------
-# Generated CMake target import file for configuration "Release".
+# Generated CMake target import file for configuration "release".
 #----------------------------------------------------------------
 
 # Commands may need to know the format version.
 set(CMAKE_IMPORT_FILE_VERSION 1)
 
-# Import target "OSDependent" for configuration "Release"
+# Import target "OSDependent" for configuration "release"
 set_property(TARGET OSDependent APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
 set_target_properties(OSDependent PROPERTIES
   IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "CXX"
