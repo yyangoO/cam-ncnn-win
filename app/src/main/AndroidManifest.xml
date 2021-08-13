@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+package="com.yyang.camncnnwin"
+android:versionCode="1"
+android:versionName="1.0">
+<uses-feature android:name="android.hardware.camera" />
+<uses-permission android:name="android.permission.CAMERA" />
+<application
+    android:allowBackup="false"
+    android:fullBackupContent="false"
+    android:label="@string/app_name"
+    android:screenOrientation="sensorLandscape"
+    android:configChanges="keyboardHidden|orientation|screenSize"
+    android:hasCode="true">
+    <activity android:name="com.yyang.camncnnwin.MainActivity"
+        android:label="@string/app_name">
+        <meta-data android:name="android.app.lib_name"
+            android:value="cam_ncnn_win" />
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+    </activity>
+</application>
+</manifest>
+
