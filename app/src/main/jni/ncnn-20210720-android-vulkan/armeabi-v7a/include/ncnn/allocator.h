@@ -424,6 +424,39 @@ public:
     VkAndroidHardwareBufferPropertiesANDROID bufferProperties;
     VkSamplerYcbcrConversionKHR samplerYcbcrConversion;
 };
+
+// class NCNN_EXPORT vkMemoryAndroidHardwareBufferAllocator : public VkAllocator
+// {
+// public:
+//     vkMemoryAndroidHardwareBufferAllocator(const VulkanDevice* _vkdev, VkBufferMemory* _vk_bm);
+//     vkMemoryAndroidHardwareBufferAllocator(const VulkanDevice* _vkdev, VkImageMemory* _vk_im);
+//     virtual ~vkMemoryAndroidHardwareBufferAllocator();
+
+// public:
+//     virtual VkBufferMemory* fastMalloc(size_t size);
+//     virtual void fastFree(VkBufferMemory* ptr);
+//     virtual VkImageMemory* fastMalloc(int w, int h, int c, size_t elemsize, int elempack);
+//     virtual void fastFree(VkImageMemory* ptr);
+
+// private:
+//     vkMemoryAndroidHardwareBufferAllocator(const vkMemoryAndroidHardwareBufferAllocator&);
+//     vkMemoryAndroidHardwareBufferAllocator& operator=(const vkMemoryAndroidHardwareBufferAllocator&);
+
+// public:
+//     int init();
+
+//     int width() const;
+//     int height() const;
+//     uint64_t external_format() const;
+
+// public:
+//     VkBufferMemory* vk_bm;
+//     VkImageMemory* vk_im;
+//     AHardwareBuffer* hb;
+//     AHardwareBuffer_Desc bufferDesc;
+//     VkAndroidHardwareBufferFormatPropertiesANDROID bufferFormatProperties;
+//     VkMemoryGetAndroidHardwareBufferInfoANDROID bufferinfo;
+// };
 #endif // __ANDROID_API__ >= 26
 #endif // NCNN_PLATFORM_API
 

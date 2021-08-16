@@ -396,6 +396,13 @@ public:
     size_t buffer_offset() const;
     size_t buffer_capacity() const;
 
+#if NCNN_PLATFORM_API
+#if __ANDROID_API__ >= 26
+    // convenient construct from android hardware buffer
+    static VkMat from_android_hardware_buffer(VkAndroidHardwareBufferImageAllocator* allocator);
+#endif // __ANDROID_API__ >= 26
+#endif // NCNN_PLATFORM_API
+
     // device buffer
     VkBufferMemory* data;
 

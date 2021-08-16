@@ -39,7 +39,7 @@
 #define NCNN_INT8 1
 #define NCNN_BF16 1
 
-#define NCNN_VERSION_STRING "1.0.20210813"
+#define NCNN_VERSION_STRING "1.0.20210816"
 
 #include "ncnn_export.h"
 

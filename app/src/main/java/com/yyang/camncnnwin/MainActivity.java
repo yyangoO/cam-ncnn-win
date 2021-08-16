@@ -1,12 +1,11 @@
 package com.yyang.camncnnwin;
 
 import android.Manifest;
-import android.annotation.SuppressLint;
 import android.app.NativeActivity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
@@ -20,14 +19,17 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.PopupWindow;
 import android.widget.RelativeLayout;
-import android.widget.SeekBar;
 import android.widget.TextView;
-import android.widget.Toast;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 
 import static android.hardware.camera2.CameraMetadata.LENS_FACING_BACK;
+
+import java.io.FileNotFoundException;
 
 
 public class MainActivity extends NativeActivity implements ActivityCompat.OnRequestPermissionsResultCallback
@@ -35,13 +37,17 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
     volatile MainActivity _saved_instance;
 
     private final String DBG_TAG = "CAM2NCNN2WIN";
-    private static final int PERMISSION_REQUEST_CODE_CAMERA = 1;
+    private static final int SELECT_IMAGE = 1;
+    private static final int PERMISSION_REQUEST_CODE_CAMERA = 2;
+    private Bitmap my_selected_image = null;
 
     PopupWindow _popup_window;
     TextView _ncnn_datatype_textview;
     TextView _ncnn_result_textview;
-    Button _vkimagemat_button;
-    Button _vkmat_button;
+    Button _album_button;
+    Button _choose_button;
+    Button _camera_button;
+    Button _init_button;
     Button _detect_button;
 
     @Override
@@ -102,6 +108,36 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
         }
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data)
+    {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (resultCode == RESULT_OK && null != data)
+        {
+            Uri selected_image = data.getData();
+
+            try
+            {
+                if (requestCode == SELECT_IMAGE) {
+                    Bitmap bitmap = decodeUri(selected_image);
+
+                    Bitmap rgba = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+
+                    // resize to 227x227
+                    my_selected_image = Bitmap.createScaledBitmap(rgba, 227, 227, false);
+
+                    rgba.recycle();
+                }
+            }
+            catch (FileNotFoundException e)
+            {
+                Log.e("MainActivity", "FileNotFoundException");
+                return;
+            }
+        }
+    }
+
     private boolean isCamera2Device()
     {
         CameraManager camMgr = (CameraManager)getSystemService(Context.CAMERA_SERVICE);
@@ -130,6 +166,32 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
         }
 
         return camera2Dev;
+    }
+
+    private Bitmap decodeUri(Uri selectedImage) throws FileNotFoundException
+    {
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        BitmapFactory.decodeStream(getContentResolver().openInputStream(selectedImage), null, o);
+
+        final int REQUIRED_SIZE = 400;
+
+        int width_tmp = o.outWidth, height_tmp = o.outHeight;
+        int scale = 1;
+        while (true)
+        {
+            if (width_tmp / 2 < REQUIRED_SIZE || height_tmp / 2 < REQUIRED_SIZE)
+            {
+                break;
+            }
+            width_tmp /= 2;
+            height_tmp /= 2;
+            scale *= 2;
+        }
+
+        BitmapFactory.Options o2 = new BitmapFactory.Options();
+        o2.inSampleSize = scale;
+        return BitmapFactory.decodeStream(getContentResolver().openInputStream(selectedImage), null, o2);
     }
 
     public void RequestCamera()
@@ -212,36 +274,64 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
                     _ncnn_datatype_textview = (TextView) popup_view.findViewById(R.id.currrent_ncnn_data_type);
                     _ncnn_result_textview = (TextView) popup_view.findViewById(R.id.detect_result);
 
-                    _vkimagemat_button = (Button) popup_view.findViewById(R.id.button_vkimagemat);
-                    _vkimagemat_button.setOnClickListener(new View.OnClickListener() {
+                    _choose_button = (Button) popup_view.findViewById(R.id.button_choose);
+                    _choose_button.setOnClickListener(new View.OnClickListener() {
                         @Override
                         public void onClick(View v)
                         {
-                            UpateNcnnType(true);
-                            _ncnn_datatype_textview.setText("currrent ncnn data type: VkImageMat");
+                            Intent i = new Intent(Intent.ACTION_PICK);
+                            i.setType("image/*");
+                            startActivityForResult(i, SELECT_IMAGE);
                         }
                     });
-                    _vkimagemat_button.setEnabled(true);
+                    _choose_button.setEnabled(true);
 
-                    _vkmat_button = (Button) popup_view.findViewById(R.id.button_vkmat);
-                    _vkmat_button.setOnClickListener(new View.OnClickListener() {
+                    _album_button = (Button) popup_view.findViewById(R.id.button_album);
+                    _album_button.setOnClickListener(new View.OnClickListener() {
                         @Override
                         public void onClick(View v)
                         {
-                            UpateNcnnType(false);
-                            _ncnn_datatype_textview.setText("currrent ncnn data type: VkMat");
+                            if (my_selected_image == null)
+                            {
+                                _ncnn_datatype_textview.setText("didn't choose a picture ");
+                                return;
+                            }
+                            ChooseAlbum(my_selected_image);
+
+                            _ncnn_datatype_textview.setText("currrent ncnn data source: album ");
                         }
                     });
-                    _vkmat_button.setEnabled(true);
+                    _album_button.setEnabled(true);
+
+                    _camera_button = (Button) popup_view.findViewById(R.id.button_camera);
+                    _camera_button.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v)
+                        {
+                            ChooseCamera();
+                            _ncnn_datatype_textview.setText("currrent ncnn data source: camera ");
+                        }
+                    });
+                    _camera_button.setEnabled(true);
+
+                    _init_button = (Button) popup_view.findViewById(R.id.button_init);
+                    _init_button.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v)
+                        {
+                            NetworkInit(getAssets());
+                            _ncnn_result_textview.setText("ncnn initialization succeed, waiting for choosing source... ");
+                        }
+                    });
+                    _init_button.setEnabled(true);
 
                     _detect_button = (Button) popup_view.findViewById(R.id.button_squeezenet);
                     _detect_button.setOnClickListener(new View.OnClickListener() {
                         @Override
                         public void onClick(View v)
                         {
-                            NetworkInit(getAssets());
                             NetworkDetect();
-                            _ncnn_result_textview.setText("detect result: null");
+                            _ncnn_result_textview.setText("ncnn detect result: null ");
                         }
                     });
                     _detect_button.setEnabled(true);
@@ -253,7 +343,8 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
             }});
     }
 
-    native static void UpateNcnnType(boolean vkimagemat_flag);
+    native static void ChooseAlbum(Bitmap bitmap);
+    native static void ChooseCamera();
     native static void NetworkInit(AssetManager mgr);
     native static void NetworkDetect();
     private native static void NotifyCameraPermission(boolean granted);

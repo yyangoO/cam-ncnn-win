@@ -12,6 +12,7 @@
 #include <camera/NdkCameraDevice.h>
 #include <camera/NdkCameraMetadataTags.h>
 #include <media/NdkImageReader.h>
+#include <android/bitmap.h>
 
 #include <functional>
 #include <thread>
@@ -33,8 +34,19 @@
 enum PREVIEW_INDICES
 {
     PREVIEW_REQUEST_IDX = 0,    ///< preview request index
-    JPG_CAPTURE_REQUEST_IDX,    ///< JPG capture request index
     CAPTURE_REQUEST_COUNT,      ///< capture request count
+};
+
+
+/**
+ * @brief app source data type
+ * app source data type
+ */
+enum APP_SOURCE_TYPE
+{
+    APP_SOURCE_NONE = 0,    ///< app no source
+    APP_SOURCE_CAMERA,      ///< app camera source
+    APP_SOURCE_PICTURE      ///< app picture source
 };
 
 
@@ -57,7 +69,7 @@ enum class CaptureSessionState : int32_t
  */
 struct CaptureRequestInfo
 {
-    ANativeWindow* output_native_window_;       ///< output native window
+    ANativeWindow* output_native_window_;       ///< output native window of request
     ACaptureSessionOutput* session_output_;     ///< output capture session
     ACameraOutputTarget* target_;               ///< camera output target
     ACaptureRequest* request_;                  ///< capture request
@@ -70,11 +82,19 @@ struct CaptureRequestInfo
  * @brief data structure of image format
  * a data structure to communicate resolution between camera and image reader
  */
-struct ImageFormat {
+struct ImageFormat
+{
     int32_t width;      ///< width
     int32_t height;     ///< height
 
     int32_t format;     ///< in this demo, the format is fixed to YUV_420
+};
+
+
+struct NcnnRet
+{
+    AHardwareBuffer* hb;        ///< the android hardwarebuffer
+    std::string ret;            ///< the result
 };
 
 
@@ -317,23 +337,37 @@ public:
 class NDKCamera
 {
 private:
-    ACameraManager* _cam_mgr;                                   ///< Android Camera Manager pointer
-    std::map<std::string, CameraId> _cams;                      ///< this cameras ID
-    std::string _active_cam_id;                                 ///< active camera ID
-    uint32_t _cam_facing;                                       ///< camera's facing
-    uint32_t _cam_orientation;                                  ///< camera's orientation
+    ACameraManager* _cam_mgr;                                           ///< Android Camera Manager pointer
+    std::map<std::string, CameraId> _cams;                              ///< this cameras ID
+    std::string _active_cam_id;                                         ///< active camera ID
+    uint32_t _cam_facing;                                               ///< camera's facing
+    uint32_t _cam_orientation;                                          ///< camera's orientation
 
-    std::vector<CaptureRequestInfo> _requests;                  ///< android camera capture request information
+    std::vector<CaptureRequestInfo> _requests;                          ///< android camera capture request information
 
-    ACaptureSessionOutputContainer* _output_container;          ///< need to receive image stream
-    ACameraCaptureSession* _capture_session;                    ///< capture session
-    CaptureSessionState _capture_session_state;                 ///< capture session's state
+    ACaptureSessionOutputContainer* _output_container;                  ///< need to receive image stream
+    ACameraCaptureSession* _capture_session;                            ///< capture session
+    CaptureSessionState _capture_session_state;                         ///< capture session's state
 
-    int64_t _exposure_time;                                     ///< camera exposure time
-    RangeValue<int64_t> _exposure_range;                        ///< camera exposure range
-    int32_t _sensitivity;                                       ///< camera sensitivity
-    RangeValue<int32_t> _sensitivity_range;                     ///< camera sensivity range
-    volatile bool _valid_flag;                                  ///< true if camera valid
+    int64_t _exposure_time;                                             ///< camera exposure time
+    RangeValue<int64_t> _exposure_range;                                ///< camera exposure range
+    int32_t _sensitivity;                                               ///< camera sensitivity
+    RangeValue<int32_t> _sensitivity_range;                             ///< camera sensivity range
+    volatile bool _valid_flag;                                          ///< true if camera valid
+
+    AImageReader* _reader;                                              ///< the android image reader
+    std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
+    void* _callback_ctx;                                                ///< the callback function pointer
+
+    ANativeWindow* _native_window;                                      ///< native window
+    ImageFormat _img_res;                                               ///< iamge format
+
+private:
+    /**
+     * @brief enumerate camera
+     * enumerate camera we have, find the camera facing back
+     */
+    void enumerate_cam(void);
 
 public:
     /**
@@ -347,11 +381,6 @@ public:
      */
     ~NDKCamera(void);
     /**
-     * @brief enumerate camera
-     * enumerate camera we have, find the camera facing back
-     */
-    void enumerate_cam(void);
-    /**
      * @brief match the capture size we request
      * match the capture size we request
      * @param display       the {@link ANativeWindow} pointer we want to display
@@ -363,11 +392,8 @@ public:
     /**
      * @brief create a capture session
      * create a capture session of camera
-     * @param preview_window        the preview window
-     * @param jpg_window            the JPG window
-     * @param image_rotation        the image's rotation
      */
-    void create_session(ANativeWindow* preview_window, ANativeWindow* jpg_window, int32_t img_rotation);
+    void create_session(void);
     /**
      * @brief get sensor orientatioin
      * get current sensor's orientation
@@ -404,27 +430,29 @@ public:
      */
     void on_session_state(ACameraCaptureSession* ses, CaptureSessionState state);
     /**
-     * @brief handle the camera capture session sequence end
-     * handle the camera capture session sequence end
-     * @param session       camera captire session
-     * @param sequence_id   camera captire session sequence ID
-     * @param frame_num     the number of frame
-     */
-    void on_capture_sequence_end(ACameraCaptureSession* session, int sequence_id, int64_t frame_num);
-    /**
-     * @brief handle the camera capture failed
-     * handle the camera capture failed
-     * @param session       camera captire session
-     * @param request       the request
-     * @param failure       the failure
-     */
-    void on_capture_failed(ACameraCaptureSession* session, ACaptureRequest* request, ACameraCaptureFailure* failure);
-    /**
-     * @brief start preview
-     * start preview
+     * @brief start request image
+     * start request image
      * @param start       start flag
      */
-    void start_preview(bool start);
+    void start_request(bool start);
+    /**
+     * @brief init the camera image
+     * init the camera image
+     * @param res       image resolution
+     */
+    void init_img(ImageFormat res);
+    /**
+     * @brief get image
+     * get image
+     * @return          hadrwarebuffer
+     */
+    AHardwareBuffer* get_img_hb(void);
+    /**
+     * @brief get the image's resolution
+     * get image's resolution
+     * @return      the image format
+     */
+    ImageFormat get_img_res(void);
     /**
      * @brief get camera manager listener
      * get camera manager listener
@@ -444,67 +472,142 @@ public:
      */
     ACameraCaptureSession_stateCallbacks* get_session_listener();
     /**
-     * @brief get camera catpure listener
-     * get camera catpure listener
-     * @return      the callback
+     * @brief image reader's callback
+     * image reader's callback
+     * @param reader     the image reader
      */
-    ACameraCaptureSession_captureCallbacks* get_capture_callback();
+    void image_callback(AImageReader* reader);
 };
 
 
+///**
+// * @brief camera yuv format image reader
+// * camera yuv format image reader
+// */
+//class YUVImgReader
+//{
+//private:
+//    AImageReader* _reader;                                              ///< the android image reader
+//    std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
+//    void* _callback_ctx;                                                ///< the callback function pointer
+//    AHardwareBuffer_Desc* _hb_desc;                                     ///< android hardwarebuffer descriptor
+//
+//public:
+//    /**
+//     * @brief construction
+//     * construction function
+//     * @param res       the resolution
+//     * @param format    the format
+//     */
+//    YUVImgReader(ImageFormat* res, enum AIMAGE_FORMATS format);
+//    /**
+//     * @brief destruction
+//     * destruction function
+//     */
+//    ~YUVImgReader(void);
+//    /**
+//     * @brief get image
+//     * get image
+//     * @return          hadrwarebuffer
+//     */
+//    AHardwareBuffer* get_img_hb(void);
+//    /**
+//     * @brief get the image's resolution
+//     * get image's resolution
+//     * @return      the image format
+//     */
+//    ImageFormat get_img_res(void);
+//    /**
+//     * @brief get the native window
+//     * get the native window enstore the image we want
+//     * @return      the native window pointer
+//     */
+//    ANativeWindow* get_native_window(void);
+//    /**
+//     * @brief delete image
+//     * delete image
+//     * @param img       the image pointer we want to delete
+//     */
+//    void delete_img(AImage* img);
+//    /**
+//     * @brief image reader's callback
+//     * image reader's callback
+//     * @param reader     the image reader
+//     */
+//    void image_callback(AImageReader* reader);
+//};
+
+
 /**
- * @brief image reader
- * image reader of camera
+ * @brief manage NDK's bitmap
+ * manage NDK's bitmap
  */
-class ImageReader
+class NDKPicture
 {
 private:
-    int32_t _present_rotation;                                          ///< current rotation
-    AImageReader* _reader;                                              ///< the android image reader
-    std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
-    void *_callback_ctx;                                                ///< the callback function pointer
-
-private:
-    /**
-     * @brief present the image
-     * present the image
-     * @param buf       the image buffer
-     * @param img       the AImage pointer
-     */
-    void present_img(ANativeWindow_Buffer* buf, AImage* img);
-    /**
-     * @brief present the image in 90 degeree
-     * present the image in 90 degree
-     * @param buf       the image buffer
-     * @param img       the AImage pointer
-     */
-    void present_img90(ANativeWindow_Buffer* buf, AImage* img);
-    /**
-     * @brief present the image in 180 degree
-     * present the image in 180 degree
-     * @param buf       the image buffer
-     * @param img       the AImage pointer
-     */
-    void present_img180(ANativeWindow_Buffer* buf, AImage* img);
-    /**
-     * @brief present the image in 270 degree
-     * present the image in 270 degree
-     * @param buf       the image buffer
-     * @param img       the AImage pointer
-     */
-    void present_img270(ANativeWindow_Buffer* buf, AImage* img);
+    void* _data;                ///< the JNI bitmap
+    ImageFormat _img_res;       ///< iamge format
 
 public:
     /**
      * @brief construction
      * construction function
+     * @param data      the iamge data
+     * @param img_res   image resolution
      */
-    explicit ImageReader(ImageFormat* res, enum AIMAGE_FORMATS format);
+    NDKPicture(void);
     /**
      * @brief destruction
      * destruction function
      */
-    ~ImageReader();
+    ~NDKPicture(void);
+    /**
+     * @brief init the bitmap
+     * init the bitmap
+     * @param data      the iamge data
+     * @param img_res   image resolution
+     */
+    void init_img(void* data, ImageFormat img_res);
+    /**
+     * @brief get image
+     * get image
+     * @return          hadrwarebuffer
+     */
+    AHardwareBuffer* get_img_hb(void);
+    /**
+     * @brief get the image's resolution
+     * get image's resolution
+     * @return      the image format
+     */
+    ImageFormat get_img_res(void);
+};
+
+
+/**
+ * @brief manage the native window
+ * manage the native window
+ */
+class NDKWindow
+{
+private:
+//    int32_t _present_rotation;                                          ///< current rotation
+//    AImageReader* _reader;                                              ///< the android image reader
+//    std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
+//    void* _callback_ctx;                                                ///< the callback function pointer
+
+public:
+    /**
+     * @brief construction
+     * construction function
+     * @param res       the resolution
+     * @param format    the format
+     */
+    NDKWindow(ImageFormat* res, enum AIMAGE_FORMATS format);
+    /**
+     * @brief destruction
+     * destruction function
+     */
+    ~NDKWindow();
     /**
      * @brief get the native window
      * get the native window enstore the image we want
@@ -562,13 +665,6 @@ public:
      * @param angle     the angle
      */
     void set_present_rotation(int32_t angle);
-    /**
-     * @brief regsiter a callback function for client to be notified that jpeg already written out
-     * regsiter a callback function for client to be notified that jpeg already written out
-     * @param ctx       client context when callback is invoked
-     * @param func      callback is the actual callback function
-     */
-    void register_callback(void* ctx, std::function<void(void* ctx, const char* fileName)> func);
 };
 
 
@@ -579,16 +675,15 @@ public:
 class NcnnNet
 {
 private:
-    ncnn::Net* _network;                                                ///< the network
-    bool _net_param_ready_flag;                                         ///< network parameter ready flag
-    bool _net_model_ready_flag;                                         ///< network model ready flag
-    bool _use_vkimagemat_flag;                                          ///< is the ncnn gpu device use VkImageMat enstore the data, if false, use VkMat
-    int _default_gpu_index;                                             ///< default gpu index
-    ncnn::VulkanDevice* _vkdev;                                         ///< vulkan device
-    ncnn::VkCompute* _cmd;                                              ///< vulkan command
-    AHardwareBuffer_Desc _hb_desc;                                      ///< android hardwarebuffer descriptor
-    AHardwareBuffer* _hb;                                               ///< android hardwarebuffer
-    ncnn::VkAndroidHardwareBufferImageAllocator* _vk_ahbi_allocator;    ///< android vulkan hardwarebuffer allocator
+    ncnn::Net* _network;            ///< the network
+    bool _net_param_ready_flag;     ///< network parameter ready flag
+    bool _net_model_ready_flag;     ///< network model ready flag
+    bool _use_vkimagemat_flag;      ///< is the ncnn gpu device use VkImageMat enstore the data, if false, use VkMat
+    int _default_gpu_index;         ///< default gpu index
+    ncnn::VulkanDevice* _vkdev;     ///< vulkan device
+    ncnn::VkCompute* _cmd;          ///< vulkan command
+    ncnn::VkMat _in_rgb_mat;        ///< input rgb mat
+    ncnn::VkImageMat _in_yuv_mat;   ///< input yuv mat
 
 public:
     /**
@@ -602,11 +697,12 @@ public:
      */
     ~NcnnNet(void);
     /**
-     * @brief initialize the android hardwarebuffer
-     * initialize the android hardwarebuffer
-     * @param yuv_reader        the image raeder point
+     * @brief allocata the inupt data
+     * allocata the inupt data of ncnn
+     * @param in_hb     input data
+     * @param in_res    input data format
      */
-    void init_hardwarebuffer(ImageReader* yuv_reader);
+    void allocate_input(AHardwareBuffer* hb, ImageFormat res);
     /**
      * @brief load parameter
      * load parameter
@@ -622,17 +718,12 @@ public:
      */
     void load_model(AAssetManager* mgr, const char* name);
     /**
-     * @brief update the data type
-     * update the data type
-     * @param vkimagemat_flag       change the type we enstore the data
-     */
-    void update_vk_type(bool vkimagemat_flag);
-    /**
      * @brief detection
      * detection function
-     * @param flag      detect if true, not detect if false
+     * @param detect        detect if true, not detect if false
+     * @return              the detect result
      */
-    void detect(bool flag);
+    NcnnRet detect(bool detect);
 };
 
 
@@ -645,14 +736,16 @@ class AppEngine
 private:
     struct android_app* _app;           ///< android app pointer
     ImageFormat _native_win_res;        ///< saved native window
-    bool _cam_granted_flag;             ///< granted camera
     int _rotation;                      ///< rotation
-    volatile bool _cam_ready_flag;      ///< camera ready flag
     NDKCamera* _cam;                    ///< camera
-    ImageReader* _yuv_reader;           ///< YUV reader
-    ImageReader* _jpg_reader;           ///< JPG reader
+    NDKPicture* _pic;                   ///< RGB reader
+
     NcnnNet* _ncnn_net;                 ///< ncnn network
     bool _ncnn_detect_flag;             ///< ncnn detect flag
+    bool _cam_granted_flag;             ///< granted camera or not
+
+    bool _cam_ready_flag;               ///< camera ready flag
+    bool _pic_ready_flag;               ///< granted bitmap picture or not
 
 private:
     /**
@@ -675,43 +768,34 @@ public:
      */
     ~AppEngine(void);
     /**
-     * @brief the interface for android app
-     * the interface for android app
+     * @brief the interface to android app
+     * the interface to android app
      * @return      android app pointer
      */
-    struct android_app* interface_4_android_app(void) const;
+    struct android_app* interface_2_android_app(void) const;
     /**
-     * @brief the interface to android asset manager
-     * the interface to android asset manager
+     * @brief the interface for android asset manager
+     * the interface for android asset manager
      * @param mgr       the android asset manager
      */
-    void interface_2_aasset_mgr(AAssetManager* mgr);
+    void interface_4_aasset_mgr(AAssetManager* mgr);
     /**
-     * @brief update the data type
-     * update the data type
-     * @param vkimagemat_flag       change the type we enstore the data
+     * @brief the interface for ncnn's input data
+     * the interface for ncnn's input data
+     * @param data      the image data
+     * @param res       image resolution
      */
-    void interface_2_ncnn_vktype(bool vkimagemat_flag);
+    void interface_4_ncnn_input(void* data, ImageFormat res);
     /**
-     * @brief reverse the detect flag
-     * reverse the detect flag
+     * @brief interface for ncnn's detection flag
+     * interface for ncnn's detection flag
      */
-    void interface_2_ncnn_detectflag(void);
+    void interface_4_ncnn_detect(bool detect);
     /**
      * @brief handle Android System APP_CMD_INIT_WINDOW message
      * request camera persmission from Java side
      */
     void on_app_init_window(void);
-    /**
-     * @brief draw the frame
-     * draw the frame
-     */
-    void draw_frame(void);
-    /**
-     * @brief initialize the ncnn network
-     * initialize the ncnn network
-     */
-    void on_app_init_ncnn(void);
     /**
      * @brief handle android app's request
      * configure the changes
@@ -770,10 +854,32 @@ public:
      */
     void create_cam(void);
     /**
+     * @brief craete the picture
+     * craete the picture
+     */
+    void create_pic(void);
+    /**
      * @brief delete the camera
      * delete the camera
      */
     void delete_cam(void);
+    /**
+     * @brief delete the picture
+     * delete the picture
+     */
+    void delete_pic(void);
+    /**
+     * @brief draw the camera frame
+     * draw the camera frame
+     * @param detect_flag       detect flag
+     */
+    void draw_cam_frame(bool detect_flag);
+    /**
+     * @brief draw the pciture frame
+     * draw the picture frame
+     * @param detect_flag       detect flag
+     */
+    void draw_pic_frame(bool detect_flag);
 };
 
 
