@@ -124,8 +124,7 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
 
                     Bitmap rgba = bitmap.copy(Bitmap.Config.ARGB_8888, true);
 
-                    // resize to 227x227
-                    my_selected_image = Bitmap.createScaledBitmap(rgba, 227, 227, false);
+                    my_selected_image = Bitmap.createScaledBitmap(rgba, 1080, 1920, false);
 
                     rgba.recycle();
                 }

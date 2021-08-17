@@ -101,16 +101,16 @@ void NDKCamera::on_cam_status_changed(const char *id, bool available)
 
 void on_session_closed(void* ctx, ACameraCaptureSession* ses)
 {
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::on_session_closed -> error!");
+    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::on_session_closed -> closed!");
     reinterpret_cast<NDKCamera*>(ctx)->on_session_state(ses, CaptureSessionState::CLOSED);
 }
 void on_session_ready(void* ctx, ACameraCaptureSession* ses) {
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::on_session_ready -> error!");
+    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::on_session_ready -> ready!");
     reinterpret_cast<NDKCamera*>(ctx)->on_session_state(ses, CaptureSessionState::READY);
 }
 void on_session_active(void* ctx, ACameraCaptureSession* ses)
 {
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::on_session_active -> error!");
+    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::on_session_active -> active!");
     reinterpret_cast<NDKCamera*>(ctx)->on_session_state(ses, CaptureSessionState::ACTIVE);
 }
 
@@ -163,7 +163,7 @@ void NDKCamera::on_session_state(ACameraCaptureSession *ses, CaptureSessionState
 //                                    failure);
 //    captureFailedThread.detach();
 //}
-//
+
 //void session_capture_callback_onsequenceend(void* context,
 //                                            ACameraCaptureSession* session,
 //                                            int sequence_id,
@@ -187,7 +187,7 @@ void NDKCamera::on_session_state(ACameraCaptureSession *ses, CaptureSessionState
 //                               static_cast<int64_t>(-1));
 //    sequenceThread.detach();
 //}
-
+//
 //ACameraCaptureSession_captureCallbacks* NDKCamera::get_capture_callback(void)
 //{
 //    static ACameraCaptureSession_captureCallbacks capture_listener{
@@ -247,6 +247,7 @@ NDKCamera::NDKCamera()
           _capture_session_state(CaptureSessionState::MAX_STATE),
           _exposure_time(static_cast<int64_t>(0)),
           _native_window(nullptr),
+          _hb(nullptr),
           _callback(nullptr),
           _callback_ctx(nullptr)
 {
@@ -415,16 +416,13 @@ void NDKCamera::enumerate_cam(void)
 }
 
 
-bool NDKCamera::match_capture_size_request(ANativeWindow *display, ImageFormat *res_view, ImageFormat *res_cap)
+bool NDKCamera::get_capture_size(ANativeWindow* display, ImageFormat* view)
 {
     camera_status_t status = ACAMERA_OK;
 
-    // get the display dimension
     DisplayDimension disp(ANativeWindow_getWidth(display), ANativeWindow_getHeight(display));
     if (this->_cam_orientation == 90 || this->_cam_orientation == 270)
-    {
         disp.flip();
-    }
 
     ACameraMetadata* acam_metadata;
     status = ACameraManager_getCameraCharacteristics(this->_cam_mgr, this->_active_cam_id.c_str(), &acam_metadata);
@@ -442,61 +440,45 @@ bool NDKCamera::match_capture_size_request(ANativeWindow *display, ImageFormat *
         return false;
     }
 
-    // format of the data: format, width, height, input?, type int32
     bool found_it_flag = false;
     DisplayDimension found_res(4000, 4000);
-    DisplayDimension max_jpg(0, 0);
     for (int i = 0; i < entry.count; i += 4)
     {
         int32_t input = entry.data.i32[i + 3];
         int32_t format = entry.data.i32[i + 0];
         if (input)
-        {
             continue;
-        }
-        if (format == AIMAGE_FORMAT_YUV_420_888 || format == AIMAGE_FORMAT_JPEG)
+        if (format == AIMAGE_FORMAT_YUV_420_888)
         {
             DisplayDimension res(entry.data.i32[i + 1], entry.data.i32[i + 2]);
-            if (!disp.IsSameRatio(res))
-            {
+            if (!disp.is_same_ratio(res))
                 continue;
-            }
-            if (format == AIMAGE_FORMAT_YUV_420_888 && found_res > res)
-            {
-                found_it_flag = true;
-                found_res = res;
-            }
-            else if (format == AIMAGE_FORMAT_JPEG && res > max_jpg)
-            {
-                max_jpg = res;
-            }
+
+            found_it_flag = true;
+            found_res = res;
         }
     }
 
     if (found_it_flag)
     {
-        res_view->width = found_res.org_width();
-        res_view->height = found_res.org_height();
-        res_cap->width = max_jpg.org_width();
-        res_cap->height = max_jpg.org_height();
+        view->width = found_res.org_width();
+        view->height = found_res.org_height();
     }
     else
     {
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::match_capture_size_request -> not any compatible camera resolution, taking 640x480!");
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::get_capture_size -> no compatible camera resolution, taking 1920*1080!");
         if (disp.IsPortrait())
         {
-            res_view->width = 480;
-            res_view->height = 640;
+            view->width = 1080;
+            view->height = 1920;
         }
         else
         {
-            res_view->width = 640;
-            res_view->height = 480;
+            view->width = 1920;
+            view->height = 1080;
         }
-        *res_cap = *res_view;
     }
-    res_view->format = AIMAGE_FORMAT_YUV_420_888;
-    res_cap->format = AIMAGE_FORMAT_JPEG;
+    view->format = AIMAGE_FORMAT_YUV_420_888;
 
     return found_it_flag;
 }
@@ -506,18 +488,19 @@ void NDKCamera::create_session(void)
 {
     camera_status_t status = ACAMERA_OK;
 
-    // create output from this app's ANativeWindow, and add into output container
+    if (this->_native_window == nullptr)
+    {
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::create_session -> native window is not initialized!");
+    }
+
     this->_requests[PREVIEW_REQUEST_IDX].output_native_window_ = this->_native_window;
     this->_requests[PREVIEW_REQUEST_IDX].template_ = TEMPLATE_PREVIEW;
 
-    // create the capture session's output container
     ACaptureSessionOutputContainer_create(&this->_output_container);
     for (auto& req : this->_requests)
     {
-        // acquire the output native window
         ANativeWindow_acquire(req.output_native_window_);
 
-        // create the capture session's output
         status = ACaptureSessionOutput_create(req.output_native_window_, &req.session_output_);
         if (status != ACAMERA_OK)
         {
@@ -525,7 +508,6 @@ void NDKCamera::create_session(void)
             return;
         }
 
-        // add the capture session's output to the output container
         status = ACaptureSessionOutputContainer_add(this->_output_container, req.session_output_);
         if (status != ACAMERA_OK)
         {
@@ -533,7 +515,6 @@ void NDKCamera::create_session(void)
             return;
         }
 
-        // create the camera output target
         status = ACameraOutputTarget_create(req.output_native_window_, &req.target_);
         if (status != ACAMERA_OK)
         {
@@ -541,7 +522,6 @@ void NDKCamera::create_session(void)
             return;
         }
 
-        // make the capture request
         status = ACameraDevice_createCaptureRequest(this->_cams[this->_active_cam_id].device_, req.template_, &req.request_);
         if (status != ACAMERA_OK)
         {
@@ -549,7 +529,6 @@ void NDKCamera::create_session(void)
             return;
         }
 
-        // add the target
         status = ACaptureRequest_addTarget(req.request_, req.target_);
         if (status != ACAMERA_OK)
         {
@@ -558,7 +537,6 @@ void NDKCamera::create_session(void)
         }
     }
 
-    // create a capture session for the given preview request
     this->_capture_session_state = CaptureSessionState::READY;
     status = ACameraDevice_createCaptureSession(this->_cams[this->_active_cam_id].device_,
                                                 this->_output_container,
@@ -679,20 +657,6 @@ AHardwareBuffer* NDKCamera::get_img_hb(void)
 
     AImage* image = nullptr;
     AHardwareBuffer* hb = nullptr;
-    AHardwareBuffer_Desc hb_desc;
-
-    hb_desc.width = this->_img_res.width;
-    hb_desc.height = this->_img_res.height;
-    hb_desc.format = this->_img_res.format;
-    hb_desc.rfu0 = 0;
-    hb_desc.rfu1 = 0;
-    hb_desc.layers = 1;
-    hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_MASK |
-                    AHARDWAREBUFFER_USAGE_CPU_WRITE_MASK |
-                    AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
-    ret = AHardwareBuffer_allocate(&hb_desc, &hb);
-    if (ret < 0)
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKCamera::get_img_hb AHardwareBuffer_allocate -> %d", ret);
 
     status = AImageReader_acquireNextImage(this->_reader, &image);
     if (status != AMEDIA_OK)
@@ -702,36 +666,29 @@ AHardwareBuffer* NDKCamera::get_img_hb(void)
     if (status != AMEDIA_OK)
         return hb;
 
-    return hb;
+    return this->_hb;
 }
 
 ImageFormat NDKCamera::get_img_res(void)
 {
     media_status_t status = AMEDIA_OK;
 
-    ImageFormat img_fmt;
-    int32_t width = 0;
-    int32_t height = 0;
-    int32_t format = 0;
+    ImageFormat img_res;
 
-    status = AImageReader_getWidth(this->_reader, &width);
+    status = AImageReader_getWidth(this->_reader, &img_res.width);
     if (status != AMEDIA_OK)
         __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "YUVImgReader::get_img_res AImageReader_getWidth -> %d", status);
-    status = AImageReader_getHeight(this->_reader, &height);
+    status = AImageReader_getHeight(this->_reader, &img_res.height);
     if (status != AMEDIA_OK)
         __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "YUVImgReader::get_img_res AImageReader_getHeight -> %d", status);
-    status = AImageReader_getFormat(this->_reader, &format);
+    status = AImageReader_getFormat(this->_reader, &img_res.format);
     if (status != AMEDIA_OK)
         __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "YUVImgReader::get_img_res AImageReader_getFormat -> %d", status);
 
-    if (format != AIMAGE_FORMAT_YUV_420_888)
+    if (img_res.format != AIMAGE_FORMAT_YUV_420_888)
         __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "YUVImgReader::get_img_res -> wrong camera image format!");
 
-    img_fmt.width = width;
-    img_fmt.height = height;
-    img_fmt.format = format;
-
-    return img_fmt;
+    return img_res;
 }
 
 NDKCamera::~NDKCamera()
@@ -916,9 +873,8 @@ NDKCamera::~NDKCamera()
 
 
 NDKPicture::NDKPicture(void)
+    : _data(nullptr)
 {
-    this->_data = nullptr;
-    this->_img_res = {};
 }
 
 void NDKPicture::init_img(void *data, ImageFormat img_res)
@@ -933,23 +889,24 @@ AHardwareBuffer* NDKPicture::get_img_hb(void)
     AHardwareBuffer* hb = nullptr;
     AHardwareBuffer_Desc hb_desc;
 
-    hb_desc.width = this->_img_res.width;
-    hb_desc.height = this->_img_res.height;
-    hb_desc.format = this->_img_res.format;
+    hb_desc.width = this->_img_res.width * this->_img_res.height * 4;
+    hb_desc.height = 1;
+    hb_desc.format = AHARDWAREBUFFER_FORMAT_BLOB;
     hb_desc.rfu0 = 0;
     hb_desc.rfu1 = 0;
     hb_desc.layers = 1;
-    hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_MASK |
-                    AHARDWAREBUFFER_USAGE_CPU_WRITE_MASK |
-                    AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+    hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_MASK | AHARDWAREBUFFER_USAGE_CPU_WRITE_MASK | AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER;
+
     ret = AHardwareBuffer_allocate(&hb_desc, &hb);
     if (ret < 0)
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "RGBImgReader::get_img AHardwareBuffer_allocate -> %d", ret);
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKPicture::get_img_hb AHardwareBuffer_allocate -> %d", ret);
 
     ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_WRITE_MASK, 0, NULL, &this->_data);
     if (ret < 0)
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "RGBImgReader::get_img AHardwareBuffer_lock -> %d", ret);
-    AHardwareBuffer_unlock(hb, NULL);
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKPicture::get_img_hb AHardwareBuffer_lock -> %d", ret);
+    ret = AHardwareBuffer_unlock(hb, NULL);
+    if (ret < 0)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NDKPicture::get_img_hb AHardwareBuffer_unlock -> %d", ret);
 
     return hb;
 }
@@ -962,10 +919,8 @@ ImageFormat NDKPicture::get_img_res(void)
 NDKPicture::~NDKPicture(void)
 {
     this->_data = nullptr;
-
-    this->_img_res.width = {};
+    this->_img_res = {};
 }
-
 
 
 
@@ -1367,31 +1322,6 @@ NcnnNet::NcnnNet(void)
     this->_network->opt = opt;
 }
 
-void NcnnNet::allocate_input(AHardwareBuffer* hb, ImageFormat res)
-{
-    if (hb == nullptr)
-        return;
-
-    if (res.format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM)
-    {
-        ncnn::VkAndroidHardwareBufferImageAllocator* ahbi_allocator = new ncnn::VkAndroidHardwareBufferImageAllocator(this->_vkdev, hb);
-        this->_in_rgb_mat = this->_in_rgb_mat.from_android_hardware_buffer(ahbi_allocator);
-    }
-    else if (res.format == AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420)
-    {
-        ncnn::VkAndroidHardwareBufferImageAllocator* ahbi_allocator = new ncnn::VkAndroidHardwareBufferImageAllocator(this->_vkdev, hb);
-        this->_in_yuv_mat = this->_in_yuv_mat.from_android_hardware_buffer(ahbi_allocator);
-    }
-
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "A%d", this->_in_yuv_mat.w);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "B%d", this->_in_yuv_mat.h);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "C%d", this->_in_yuv_mat.c);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "D%d", this->_in_yuv_mat.dims);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "E%d", this->_in_yuv_mat.elemsize);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "F%d", this->_in_yuv_mat.elempack);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "G%d", this->_in_yuv_mat.total());
-}
-
 void NcnnNet::load_param(AAssetManager *mgr, const char* name)
 {
     int ret = this->_network->load_param(mgr, name);
@@ -1412,19 +1342,165 @@ void NcnnNet::load_model(AAssetManager *mgr, const char* name)
         this->_net_model_ready_flag = true;
 }
 
-NcnnRet NcnnNet::detect(bool detect)
+NcnnRet NcnnNet::detect(AHardwareBuffer* hb, ImageFormat res)
 {
     NcnnRet ncnn_ret;
 
-
-
-
-    if (detect)
+    if (hb == nullptr)
     {
-        // check parameter and model
-        if (!this->_net_param_ready_flag || !this->_net_model_ready_flag)
-            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NcnnNet::detect -> didn't load model or parameter");
+        ncnn_ret.hb = nullptr;
+        ncnn_ret.ret = "null";
+        return ncnn_ret;
     }
+
+    if (res.format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM)
+    {
+        ncnn::VkMat in_mat;
+        ncnn::VkAndroidHardwareBufferImageAllocator* ahbi_allocator = new ncnn::VkAndroidHardwareBufferImageAllocator(this->_vkdev, hb);
+        in_mat = in_mat.from_android_hardware_buffer(ahbi_allocator);
+
+        ncnn::VkMat out_mat;
+        ncnn::vkMemoryAndroidHardwareBufferAllocator* mahb_allocator = new ncnn::vkMemoryAndroidHardwareBufferAllocator(this->_vkdev);
+
+        ncnn::Option clone_opt;
+        clone_opt.blob_vkallocator = mahb_allocator;
+        clone_opt.use_vulkan_compute = true;
+
+        this->_cmd->record_clone(in_mat, out_mat, clone_opt);
+
+        AHardwareBuffer* out_hb = mahb_allocator->get_hb();
+        AHardwareBuffer_Desc desc;
+        AHardwareBuffer_describe(out_hb, &desc);
+
+
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%d", desc.width);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "BBBBBBBBBBBBBBBBBB%d", desc.height);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "CCCCCCC%d", desc.format);
+
+
+
+
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "A%d", in_mat.w);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "B%d", in_mat.h);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "C%d", in_mat.c);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "D%d", in_mat.dims);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "E%d", in_mat.elemsize);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "F%d", in_mat.elempack);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "G%d", static_cast<int>(ahbi_allocator->bufferDesc.width));
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "H%d", static_cast<int>(ahbi_allocator->bufferDesc.height));
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "I%d", static_cast<int>(ahbi_allocator->bufferDesc.format));
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "J%d", static_cast<int>(ahbi_allocator->bufferProperties.allocationSize));
+
+
+//        VkResult ret;
+//
+//        VkBufferCreateInfo bufferCreateInfo;
+//        bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+//        bufferCreateInfo.pNext = 0;
+//        bufferCreateInfo.flags = 0;
+//        bufferCreateInfo.size = 1920 * 1080 * 4;
+//        bufferCreateInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+//        bufferCreateInfo.queueFamilyIndexCount = 0;
+//        bufferCreateInfo.pQueueFamilyIndices = 0;
+//
+//        VkBuffer buffer = 0;
+//        ret = vkCreateBuffer(this->_vkdev->vkdevice(), &bufferCreateInfo, 0, &buffer);
+//
+//        VkMemoryRequirements memoryRequirements;
+//        vkGetBufferMemoryRequirements(this->_vkdev->vkdevice(), buffer, &memoryRequirements);
+//
+//        uint32_t buffer_memory_type_index = this->_vkdev->find_memory_index(memoryRequirements.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+//
+//
+//        VkExportMemoryAllocateInfo exportMemoryAllocateInfo;
+//        exportMemoryAllocateInfo.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+//        exportMemoryAllocateInfo.pNext = 0;
+//        exportMemoryAllocateInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+//
+//        VkMemoryAllocateInfo memoryAllocateInfo;
+//        memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+//        memoryAllocateInfo.pNext = &exportMemoryAllocateInfo;
+//        memoryAllocateInfo.allocationSize = 1920 * 1080 * 4;
+//        memoryAllocateInfo.memoryTypeIndex = buffer_memory_type_index;
+//
+//        VkDeviceMemory memory = 0;
+//        ret = vkAllocateMemory(this->_vkdev->vkdevice(), &memoryAllocateInfo, 0, &memory);
+//
+//        VkBindBufferMemoryInfo bindBufferMemoryInfo;
+//        bindBufferMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO;
+//        bindBufferMemoryInfo.pNext = 0;
+//        bindBufferMemoryInfo.buffer = in_mat.data->buffer;
+//        bindBufferMemoryInfo.memory = memory;
+//        bindBufferMemoryInfo.memoryOffset = 0;
+//        ret = this->_vkdev->vkBindBufferMemory2KHR(this->_vkdev->vkdevice(), 1, &bindBufferMemoryInfo);
+//
+//        AHardwareBuffer* out_hb = nullptr;
+//
+
+//        VkMemoryGetAndroidHardwareBufferInfoANDROID memoryGetAndroidHardwareBufferInfo;
+//        memoryGetAndroidHardwareBufferInfo.sType = VK_STRUCTURE_TYPE_MEMORY_GET_ANDROID_HARDWARE_BUFFER_INFO_ANDROID;
+//        memoryGetAndroidHardwareBufferInfo.pNext = 0;
+//        memoryGetAndroidHardwareBufferInfo.memory = memory;
+//
+//
+//        ret = vkGetMemoryAndroidHardwareBufferANDROID(this->_vkdev->vkdevice(), &memoryGetAndroidHardwareBufferInfo, &out_hb);
+//
+//        AHardwareBuffer_Desc out_bufferDesc;
+//        AHardwareBuffer_describe(out_hb, &out_bufferDesc);
+//
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%d", out_bufferDesc.width);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "BBBBBBBBBBBBBBBBBB%d", out_bufferDesc.height);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "CCCCCCC%d", out_bufferDesc.format);
+    }
+    else if (res.format == AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420)
+    {
+//        ncnn::VkAndroidHardwareBufferImageAllocator *ahbi_allocator = new ncnn::VkAndroidHardwareBufferImageAllocator(this->_vkdev, hb);
+////        this->_in_yuv_mat = this->_in_yuv_mat.from_android_hardware_buffer(ahbi_allocator);
+//        this->_in_yuv_mat.create(640, 480, 3, 1, 1, ahbi_allocator);
+//
+//
+//        ncnn::ImportAndroidHardwareBufferPipeline *ahb_pipeline = new ncnn::ImportAndroidHardwareBufferPipeline(this->_vkdev);
+//        ahb_pipeline->create(ahbi_allocator, 1, 0, this->_network->opt);
+//
+//        ncnn::VkImageMat in_yuv_mat;
+//        in_yuv_mat.create(640, 480, 3, 1, 1, this->_network->opt.blob_vkallocator);
+//
+////        ncnn::VkImageMat out_yuv_mat;
+//////        out_yuv_mat.create(640, 480, 3, 1, 1, this->_network->opt.blob_vkallocator);
+////        out_yuv_mat.create_like(this->_in_yuv_mat, ahbi_allocator);
+//
+//        ncnn::VkMat out_rgb_mat;
+//        out_rgb_mat.create(640, 480, 3, 1, 1, this->_network->opt.blob_vkallocator);
+//
+//        this->_cmd->record_import_android_hardware_buffer(ahb_pipeline, this->_in_yuv_mat, out_rgb_mat);
+//        this->_cmd->submit_and_wait();
+
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "A%d", res.width);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "B%d", res.height);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "C%d", res.format);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "D%d", out_rgb_mat.dims);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "E%d", out_rgb_mat.elemsize);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "F%d", out_rgb_mat.elempack);
+
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "A%d", this->_in_yuv_mat.w);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "B%d", this->_in_yuv_mat.h);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "C%d", this->_in_yuv_mat.c);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "D%d", this->_in_yuv_mat.dims);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "E%d", this->_in_yuv_mat.elemsize);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "F%d", this->_in_yuv_mat.elempack);
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "G%d", static_cast<int>(ahbi_allocator->bufferProperties.allocationSize));
+
+    }
+
+
+
+
+//    if (detect)
+//    {
+//        // check parameter and model
+//        if (!this->_net_param_ready_flag || !this->_net_model_ready_flag)
+//            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "NcnnNet::detect -> didn't load model or parameter");
+//    }
 
     return ncnn_ret;
 }
@@ -1437,17 +1513,18 @@ NcnnNet::~NcnnNet(void)
 
 
 /*----------------------------------------------------------------------------------------------------------*/
-/*----------------------------------------------camera engine-----------------------------------------------*/
+/*------------------------------------------------App engine------------------------------------------------*/
 /*----------------------------------------------------------------------------------------------------------*/
 AppEngine::AppEngine(android_app* app)
         : _app(app),
           _cam_granted_flag(false),
           _rotation(0),
-          _cam_ready_flag(false),
           _cam(nullptr),
           _pic(nullptr),
           _ncnn_net(nullptr),
-          _ncnn_detect_flag(false)
+          _win_hb(nullptr),
+          cam_ready_flag(false),
+          pic_ready_flag(false)
 {
     memset(&this->_native_win_res, 0, sizeof(this->_native_win_res));
 }
@@ -1463,29 +1540,9 @@ void AppEngine::interface_4_aasset_mgr(AAssetManager* mgr)
     this->_ncnn_net->load_model(mgr, "squeezenet_v1.1.bin");
 }
 
-void AppEngine::interface_4_ncnn_input(void* data, ImageFormat res)
+void AppEngine::interface_4_pic(void* data, ImageFormat res)
 {
-    AHardwareBuffer* hb = nullptr;
-    ImageFormat img_res;
-
-    if (res.format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM)
-    {
-        this->_pic->init_img(data, res);
-        hb = this->_pic->get_img_hb();
-        img_res = this->_pic->get_img_res();
-        this->_ncnn_net->allocate_input(hb, img_res);
-    }
-    else if (res.format == AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420)
-    {
-        hb = this->_cam->get_img_hb();
-        img_res = this->_cam->get_img_res();
-        this->_ncnn_net->allocate_input(hb, img_res);
-    }
-}
-
-void AppEngine::interface_4_ncnn_detect(bool detect)
-{
-    this->_ncnn_detect_flag = detect;
+    this->_pic->init_img(data, res);
 }
 
 void AppEngine::request_cam_permission(void)
@@ -1512,6 +1569,12 @@ void AppEngine::create_cam(void)
     if (!this->_cam_granted_flag)
         this->request_cam_permission();
 
+    if (!this->_app->window)
+    {
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::create_cam -> app's window is not initialized!");
+        return;
+    }
+
     int32_t display_rotation = this->get_display_rotation();
     this->_rotation = display_rotation;
 
@@ -1533,8 +1596,7 @@ void AppEngine::create_cam(void)
     }
 
     ImageFormat view{0, 0, 0};
-    ImageFormat capture{0, 0, 0};
-    this->_cam->match_capture_size_request(this->_app->window, &view, &capture);
+    this->_cam->get_capture_size(this->_app->window, &view);
 
     // request the necessary native window to OS
     bool portrait_nativewindow_flag = (this->_native_win_res.width < this->_native_win_res.height);
@@ -1543,17 +1605,24 @@ void AppEngine::create_cam(void)
                                      portrait_nativewindow_flag ? view.height : view.width,
                                      portrait_nativewindow_flag ? view.width : view.height,
                                      WINDOW_FORMAT_RGBA_8888);
+
     this->_cam->init_img(view);
     this->_cam->create_session();
 }
 
 void AppEngine::delete_cam(void)
 {
-    this->_cam_ready_flag = false;
+    this->cam_ready_flag = false;
     if (this->_cam)
     {
         delete this->_cam;
         this->_cam = nullptr;
+    }
+    this->pic_ready_flag = false;
+    if (this->_pic)
+    {
+        delete this->_pic;
+        this->_pic = nullptr;
     }
 }
 
@@ -1564,7 +1633,7 @@ void AppEngine::create_pic(void)
 
 void AppEngine::delete_pic(void)
 {
-    this->_pic_ready_flag = false;
+    this->pic_ready_flag = false;
     if (this->_pic)
     {
         delete this->_pic;
@@ -1572,8 +1641,9 @@ void AppEngine::delete_pic(void)
     }
 }
 
-void AppEngine::draw_cam_frame(bool detect_flag)
+void AppEngine::draw_cam_frame(void)
 {
+//    this->_ncnn_net->detect();
 //    if (!this->_cam_granted_flag)
 //        return;
 //
@@ -1611,21 +1681,57 @@ void AppEngine::draw_cam_frame(bool detect_flag)
 //    ANativeWindow_release(this->_app->window);
 }
 
-void AppEngine::draw_pic_frame(bool detect_flag)
+void AppEngine::refresh_pic_frame()
 {
-//    if (this->_rgb_reader == nullptr)
-//        return;
-//
-//    AHardwareBuffer* hb;
-//    ImageFormat img_res;
-//
-//    hb = this->_rgb_reader->get_img();
-//    if (hb == nullptr)
-//        return;
-//    img_res = this->_rgb_reader->get_img_res();
-//
-//    NcnnRet ncnn_ret;
-//    ncnn_ret = this->_ncnn_net->detect(this->_ncnn_detect_flag, hb, img_res);
+    if (!this->pic_ready_flag)
+        return;
+
+    AHardwareBuffer* hb = nullptr;
+    ImageFormat res;
+
+    hb = this->_pic->get_img_hb();
+    res = this->_pic->get_img_res();
+
+    NcnnRet ncnn_ret;
+    ncnn_ret = this->_ncnn_net->detect(hb, res);
+
+    this->_win_hb = hb;
+}
+
+void AppEngine::draw_frame(void)
+{
+    int32_t ret = -1;
+
+    if (this->_win_hb == nullptr)
+        return;
+
+    void* data = nullptr;
+
+    ANativeWindow_acquire(this->_app->window);
+    ANativeWindow_Buffer nativewindow_buf;
+    ret = ANativeWindow_lock(this->_app->window, &nativewindow_buf, nullptr);
+    if (ret < 0)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::draw_frame ANativeWindow_lock -> %d", ret);
+
+    AHardwareBuffer_Desc hb_desc;
+    AHardwareBuffer_describe(this->_win_hb, &hb_desc);
+
+    ret = AHardwareBuffer_lock(this->_win_hb, AHARDWAREBUFFER_USAGE_CPU_READ_MASK, 0, NULL, &data);
+    if (ret < 0)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::draw_frame AHardwareBuffer_lock -> %d", ret);
+
+    memcpy(nativewindow_buf.bits, data, (1920 * 1080 * 4));
+
+    ret = AHardwareBuffer_unlock(this->_win_hb, NULL);
+    if (ret < 0)
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::draw_frame AHardwareBuffer_lock -> %d", ret);
+
+    ANativeWindow_unlockAndPost(this->_app->window);
+    ANativeWindow_release(this->_app->window);
+
+    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%d", hb_desc.width);
+    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "BBBBBBBBBBBBBBBBBBBB%d", hb_desc.height);
+    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "CCC%d", hb_desc.format);
 
 }
 
@@ -1681,8 +1787,7 @@ void AppEngine::on_app_init_window(void)
         return;
 
     this->_cam->start_request(true);
-    this->_rotation = this->get_display_rotation();
-    this->_cam_ready_flag = true;
+    this->cam_ready_flag = true;
 }
 
 void AppEngine::on_app_term_window(void)
@@ -1807,10 +1912,7 @@ extern "C"
                     return;
                 }
             }
-            if (app_source_type == APP_SOURCE_CAMERA)
-                p_engine_obj->draw_cam_frame(app_ncnn_detect_flag);
-            else if (app_source_type == APP_SOURCE_PICTURE)
-                p_engine_obj->draw_pic_frame(app_ncnn_detect_flag);
+            p_engine_obj->draw_frame();
         }
     }
 
@@ -1834,21 +1936,19 @@ extern "C"
         img_res.height = bitmap_info.height;
         img_res.format = bitmap_info.format;
 
-        p_engine_obj->interface_4_ncnn_input(data, img_res);
+        ret = AndroidBitmap_unlockPixels(env, bitmap);
+        if (ret < 0)
+            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "JNI ChooseAlbum AndroidBitmap_unlockPixels -> %d", ret);
 
-        AndroidBitmap_unlockPixels(env, bitmap);
+
+        p_engine_obj->interface_4_pic(data, img_res);
+        p_engine_obj->pic_ready_flag = true;
+        p_engine_obj->refresh_pic_frame();
     }
 
     JNIEXPORT void JNICALL Java_com_yyang_camncnnwin_MainActivity_ChooseCamera(JNIEnv* env, jobject thiz)
     {
         app_source_type = APP_SOURCE_CAMERA;
-
-        void* data;
-        ImageFormat img_res;
-
-        img_res.format = AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420;
-
-        p_engine_obj->interface_4_ncnn_input(data, img_res);
     }
 
     JNIEXPORT void JNICALL Java_com_yyang_camncnnwin_MainActivity_NetworkInit(JNIEnv* env, jobject thiz, jobject assetManager)
@@ -1859,7 +1959,6 @@ extern "C"
 
     JNIEXPORT void JNICALL Java_com_yyang_camncnnwin_MainActivity_NetworkDetect(JNIEnv* env, jobject thiz)
     {
-//        p_engine_obj->interface_2_ncnn_detectflag();
         if (app_ncnn_detect_flag)
             app_ncnn_detect_flag = false;
         else

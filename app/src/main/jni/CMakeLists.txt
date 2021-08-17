@@ -6,7 +6,8 @@ cmake_minimum_required(VERSION 3.10.2)
 set(CMAKE_VERBOSE_MAKEFILE on)
 
 
-set(ncnn_DIR ${CMAKE_SOURCE_DIR}/ncnn-20210720-android-vulkan/${ANDROID_ABI}/lib/cmake/ncnn)
+#set(ncnn_DIR ${CMAKE_SOURCE_DIR}/ncnn-20210720-android-vulkan/${ANDROID_ABI}/lib/cmake/ncnn)
+set(ncnn_DIR C:/Users/yyang/source/repos/prj_ncnn/build-android-armv7/install/lib/cmake/ncnn)
 find_package(ncnn REQUIRED)
 
 

@@ -239,7 +239,7 @@ public:
      * @param other     other {@link DisplayDimension} object adress
      * @return          true if same, false if not same
      */
-    bool IsSameRatio(DisplayDimension& other)
+    bool is_same_ratio(DisplayDimension& other)
     {
         return (this->_w * other._h == this->_h * other._w);
     }
@@ -360,6 +360,7 @@ private:
     void* _callback_ctx;                                                ///< the callback function pointer
 
     ANativeWindow* _native_window;                                      ///< native window
+    AHardwareBuffer* _hb;                                               ///< the hardwarebuffer
     ImageFormat _img_res;                                               ///< iamge format
 
 private:
@@ -381,14 +382,13 @@ public:
      */
     ~NDKCamera(void);
     /**
-     * @brief match the capture size we request
-     * match the capture size we request
+     * @brief get the capture size we request
+     * get the capture size we request
      * @param display       the {@link ANativeWindow} pointer we want to display
      * @param view          the {@link ImageFormat} we want to view
-     * @param capture       the {@link ImageFormat} we capture
      * @return              true on success, false on failure
      */
-    bool match_capture_size_request(ANativeWindow* display, ImageFormat* view, ImageFormat* capture);
+    bool get_capture_size(ANativeWindow* display, ImageFormat* view);
     /**
      * @brief create a capture session
      * create a capture session of camera
@@ -682,8 +682,6 @@ private:
     int _default_gpu_index;         ///< default gpu index
     ncnn::VulkanDevice* _vkdev;     ///< vulkan device
     ncnn::VkCompute* _cmd;          ///< vulkan command
-    ncnn::VkMat _in_rgb_mat;        ///< input rgb mat
-    ncnn::VkImageMat _in_yuv_mat;   ///< input yuv mat
 
 public:
     /**
@@ -696,13 +694,6 @@ public:
      * destruction function
      */
     ~NcnnNet(void);
-    /**
-     * @brief allocata the inupt data
-     * allocata the inupt data of ncnn
-     * @param in_hb     input data
-     * @param in_res    input data format
-     */
-    void allocate_input(AHardwareBuffer* hb, ImageFormat res);
     /**
      * @brief load parameter
      * load parameter
@@ -720,10 +711,11 @@ public:
     /**
      * @brief detection
      * detection function
-     * @param detect        detect if true, not detect if false
-     * @return              the detect result
+     * @param hb        the data
+     * @param res       the data's resolution
+     * @return          the detect result
      */
-    NcnnRet detect(bool detect);
+    NcnnRet detect(AHardwareBuffer* hb, ImageFormat res);
 };
 
 
@@ -739,13 +731,13 @@ private:
     int _rotation;                      ///< rotation
     NDKCamera* _cam;                    ///< camera
     NDKPicture* _pic;                   ///< RGB reader
-
-    NcnnNet* _ncnn_net;                 ///< ncnn network
-    bool _ncnn_detect_flag;             ///< ncnn detect flag
     bool _cam_granted_flag;             ///< granted camera or not
+    NcnnNet* _ncnn_net;                 ///< ncnn network
+    AHardwareBuffer* _win_hb;           ///< window hardwarebuffer
 
-    bool _cam_ready_flag;               ///< camera ready flag
-    bool _pic_ready_flag;               ///< granted bitmap picture or not
+public:
+    bool cam_ready_flag;                ///< camera ready flag
+    bool pic_ready_flag;                ///< granted bitmap picture or not
 
 private:
     /**
@@ -780,17 +772,12 @@ public:
      */
     void interface_4_aasset_mgr(AAssetManager* mgr);
     /**
-     * @brief the interface for ncnn's input data
-     * the interface for ncnn's input data
+     * @brief the interface for NDKPicture
+     * the interface for NDKPicture
      * @param data      the image data
      * @param res       image resolution
      */
-    void interface_4_ncnn_input(void* data, ImageFormat res);
-    /**
-     * @brief interface for ncnn's detection flag
-     * interface for ncnn's detection flag
-     */
-    void interface_4_ncnn_detect(bool detect);
+    void interface_4_pic(void* data, ImageFormat res);
     /**
      * @brief handle Android System APP_CMD_INIT_WINDOW message
      * request camera persmission from Java side
@@ -849,6 +836,21 @@ public:
      */
     void enable_ui(void);
     /**
+     * @brief draw the frame
+     * draw the frame
+     */
+    void draw_frame(void);
+    /**
+     * @brief draw the camera frame
+     * draw the camera frame
+     */
+    void draw_cam_frame(void);
+    /**
+     * @brief draw the picture frame
+     * draw the  picture frame
+     */
+    void refresh_pic_frame();
+    /**
      * @brief craete the camera
      * craete the camera
      */
@@ -868,18 +870,6 @@ public:
      * delete the picture
      */
     void delete_pic(void);
-    /**
-     * @brief draw the camera frame
-     * draw the camera frame
-     * @param detect_flag       detect flag
-     */
-    void draw_cam_frame(bool detect_flag);
-    /**
-     * @brief draw the pciture frame
-     * draw the picture frame
-     * @param detect_flag       detect flag
-     */
-    void draw_pic_frame(bool detect_flag);
 };
 
 
