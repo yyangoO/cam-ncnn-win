@@ -39,18 +39,6 @@ enum PREVIEW_INDICES
 
 
 /**
- * @brief app source data type
- * app source data type
- */
-enum APP_SOURCE_TYPE
-{
-    APP_SOURCE_NONE = 0,    ///< app no source
-    APP_SOURCE_CAMERA,      ///< app camera source
-    APP_SOURCE_PICTURE      ///< app picture source
-};
-
-
-/**
  * @brief camera capture session
  * initialize the NDK Camera2 CaptureSession state
  */
@@ -88,13 +76,6 @@ struct ImageFormat
     int32_t height;     ///< height
 
     int32_t format;     ///< in this demo, the format is fixed to YUV_420
-};
-
-
-struct NcnnRet
-{
-    AHardwareBuffer* hb;        ///< the android hardwarebuffer
-    std::string ret;            ///< the result
 };
 
 
@@ -480,243 +461,42 @@ public:
 };
 
 
+
 ///**
-// * @brief camera yuv format image reader
-// * camera yuv format image reader
+// * @brief ncnn network
+// * the ncnn network
 // */
-//class YUVImgReader
+//class NcnnNet
 //{
 //private:
-//    AImageReader* _reader;                                              ///< the android image reader
-//    std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
-//    void* _callback_ctx;                                                ///< the callback function pointer
-//    AHardwareBuffer_Desc* _hb_desc;                                     ///< android hardwarebuffer descriptor
+//    ncnn::Net* _network;            ///< the network
+//    bool _net_param_ready_flag;     ///< network parameter ready flag
+//    bool _net_model_ready_flag;     ///< network model ready flag
+//    bool _use_vkimagemat_flag;      ///< is the ncnn gpu device use VkImageMat enstore the data, if false, use VkMat
+//    int _default_gpu_index;         ///< default gpu index
+//    ncnn::VulkanDevice* _vkdev;     ///< vulkan device
+//    ncnn::VkCompute* _cmd;          ///< vulkan command
 //
 //public:
 //    /**
 //     * @brief construction
 //     * construction function
-//     * @param res       the resolution
-//     * @param format    the format
 //     */
-//    YUVImgReader(ImageFormat* res, enum AIMAGE_FORMATS format);
+//    NcnnNet(void);
 //    /**
 //     * @brief destruction
 //     * destruction function
 //     */
-//    ~YUVImgReader(void);
+//    ~NcnnNet(void);
 //    /**
-//     * @brief get image
-//     * get image
-//     * @return          hadrwarebuffer
+//     * @brief detection
+//     * detection function
+//     * @param hb        the data
+//     * @param res       the data's resolution
+//     * @return          the detect result
 //     */
-//    AHardwareBuffer* get_img_hb(void);
-//    /**
-//     * @brief get the image's resolution
-//     * get image's resolution
-//     * @return      the image format
-//     */
-//    ImageFormat get_img_res(void);
-//    /**
-//     * @brief get the native window
-//     * get the native window enstore the image we want
-//     * @return      the native window pointer
-//     */
-//    ANativeWindow* get_native_window(void);
-//    /**
-//     * @brief delete image
-//     * delete image
-//     * @param img       the image pointer we want to delete
-//     */
-//    void delete_img(AImage* img);
-//    /**
-//     * @brief image reader's callback
-//     * image reader's callback
-//     * @param reader     the image reader
-//     */
-//    void image_callback(AImageReader* reader);
+//    AHardwareBuffer* detect(AHardwareBuffer* hb, ImageFormat res);
 //};
-
-
-/**
- * @brief manage NDK's bitmap
- * manage NDK's bitmap
- */
-class NDKPicture
-{
-private:
-    void* _data;                ///< the JNI bitmap
-    ImageFormat _img_res;       ///< iamge format
-
-public:
-    /**
-     * @brief construction
-     * construction function
-     * @param data      the iamge data
-     * @param img_res   image resolution
-     */
-    NDKPicture(void);
-    /**
-     * @brief destruction
-     * destruction function
-     */
-    ~NDKPicture(void);
-    /**
-     * @brief init the bitmap
-     * init the bitmap
-     * @param data      the iamge data
-     * @param img_res   image resolution
-     */
-    void init_img(void* data, ImageFormat img_res);
-    /**
-     * @brief get image
-     * get image
-     * @return          hadrwarebuffer
-     */
-    AHardwareBuffer* get_img_hb(void);
-    /**
-     * @brief get the image's resolution
-     * get image's resolution
-     * @return      the image format
-     */
-    ImageFormat get_img_res(void);
-};
-
-
-/**
- * @brief manage the native window
- * manage the native window
- */
-class NDKWindow
-{
-private:
-//    int32_t _present_rotation;                                          ///< current rotation
-//    AImageReader* _reader;                                              ///< the android image reader
-//    std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
-//    void* _callback_ctx;                                                ///< the callback function pointer
-
-public:
-    /**
-     * @brief construction
-     * construction function
-     * @param res       the resolution
-     * @param format    the format
-     */
-    NDKWindow(ImageFormat* res, enum AIMAGE_FORMATS format);
-    /**
-     * @brief destruction
-     * destruction function
-     */
-    ~NDKWindow();
-    /**
-     * @brief get the native window
-     * get the native window enstore the image we want
-     * @return      the native window pointer
-     */
-    ANativeWindow* get_native_window(void);
-    /**
-     * @brief get the image's resolution
-     * get image's resolution
-     * @return      the image format
-     */
-    ImageFormat get_img_res(void);
-    /**
-     * @brief get next image
-     * get next image
-     * @return      the image pointer
-     */
-    AImage* get_next_img(void);
-    /**
-     * @brief get last image
-     * get last image
-     * @return      the image pointer
-     */
-    AImage* get_latest_img(void);
-    /**
-     * @brief delete image
-     * delete image
-     * @param img       the image pointer we want to delete
-     */
-    void delete_img(AImage* img);
-    /**
-     * @brief image reader's callback
-     * image reader's callback
-     * @param reader     the image reader
-     */
-    void image_callback(AImageReader* reader);
-    /**
-     * @brief display image
-     * present camera image to the given display buffer, avaliable image is
-     * converted to display buffer format, supported display format:
-     *      WINDOW_FORMAT_RGBX_8888
-     *      WINDOW_FORMAT_RGBA_8888
-     * @param buf       for image to display to
-     * @param img       a instance, source of image conversion.
-     *                  it will be deleted via {@link AImage_delete}
-     * @return          true on success, false on failure
-     */
-    bool display_image(ANativeWindow_Buffer* buf, AImage* img);
-    /**
-     * @brief configure the rotation angle
-     * configure the rotation angle necessary to apply to camera image when presenting:
-     *    all rotations should be accumulated:
-     *    CameraSensorOrientation + Android Device Native Orientation +
-     *    Human Rotation (rotated degree related to Phone native orientation
-     * @param angle     the angle
-     */
-    void set_present_rotation(int32_t angle);
-};
-
-
-/**
- * @brief ncnn network
- * the ncnn network
- */
-class NcnnNet
-{
-private:
-    ncnn::Net* _network;            ///< the network
-    bool _net_param_ready_flag;     ///< network parameter ready flag
-    bool _net_model_ready_flag;     ///< network model ready flag
-    bool _use_vkimagemat_flag;      ///< is the ncnn gpu device use VkImageMat enstore the data, if false, use VkMat
-    int _default_gpu_index;         ///< default gpu index
-    ncnn::VulkanDevice* _vkdev;     ///< vulkan device
-    ncnn::VkCompute* _cmd;          ///< vulkan command
-
-public:
-    /**
-     * @brief construction
-     * construction function
-     */
-    NcnnNet(void);
-    /**
-     * @brief destruction
-     * destruction function
-     */
-    ~NcnnNet(void);
-    /**
-     * @brief load parameter
-     * load parameter
-     * @param mgr       android asset manager pointer
-     * @param name      the name
-     */
-    void load_param(AAssetManager* mgr, const char* name);
-    /**
-     * @brief load model
-     * load model
-     * @param mgr       android asset manager pointer
-     * @param name      the name
-     */
-    void load_model(AAssetManager* mgr, const char* name);
-    /**
-     * @brief detection
-     * detection function
-     * @param hb        the data
-     * @param res       the data's resolution
-     * @return          the detect result
-     */
-    NcnnRet detect(AHardwareBuffer* hb, ImageFormat res);
-};
 
 
 /**
@@ -728,16 +508,18 @@ class AppEngine
 private:
     struct android_app* _app;           ///< android app pointer
     ImageFormat _native_win_res;        ///< saved native window
+    ImageFormat _img_res;               ///< image resolution
     int _rotation;                      ///< rotation
     NDKCamera* _cam;                    ///< camera
-    NDKPicture* _pic;                   ///< RGB reader
     bool _cam_granted_flag;             ///< granted camera or not
-    NcnnNet* _ncnn_net;                 ///< ncnn network
+    bool _cam_ready_flag;               ///< app camera ready flag
     AHardwareBuffer* _win_hb;           ///< window hardwarebuffer
+    void* _bk_img;                      ///< background image
+    AHardwareBuffer* _bk_hb;            ///< background image hardwarebuffer
 
-public:
-    bool cam_ready_flag;                ///< camera ready flag
-    bool pic_ready_flag;                ///< granted bitmap picture or not
+    ncnn::Net* _network;                ///< ncnn
+    ncnn::VulkanDevice* _vkdev;         ///< vulkan device
+    ncnn::VkCompute* _cmd;              ///< vulkan command
 
 private:
     /**
@@ -765,19 +547,6 @@ public:
      * @return      android app pointer
      */
     struct android_app* interface_2_android_app(void) const;
-    /**
-     * @brief the interface for android asset manager
-     * the interface for android asset manager
-     * @param mgr       the android asset manager
-     */
-    void interface_4_aasset_mgr(AAssetManager* mgr);
-    /**
-     * @brief the interface for NDKPicture
-     * the interface for NDKPicture
-     * @param data      the image data
-     * @param res       image resolution
-     */
-    void interface_4_pic(void* data, ImageFormat res);
     /**
      * @brief handle Android System APP_CMD_INIT_WINDOW message
      * request camera persmission from Java side
@@ -836,40 +605,36 @@ public:
      */
     void enable_ui(void);
     /**
+     * @brief initalize the background
+     * initalize the background
+     */
+    void init_background(void);
+    /**
      * @brief draw the frame
      * draw the frame
+     * @param show_cam      show the camera or not
      */
-    void draw_frame(void);
+    void draw_frame(bool show_cam);
     /**
-     * @brief draw the camera frame
-     * draw the camera frame
+     * @brief draw the camera
+     * draw the camera
      */
-    void draw_cam_frame(void);
+    void show_camera(void);
     /**
-     * @brief draw the picture frame
-     * draw the  picture frame
+     * @brief clean the window with background as green
+     * clean the window with background as green
      */
-    void refresh_pic_frame();
+    void show_background(void);
     /**
      * @brief craete the camera
      * craete the camera
      */
     void create_cam(void);
     /**
-     * @brief craete the picture
-     * craete the picture
-     */
-    void create_pic(void);
-    /**
      * @brief delete the camera
      * delete the camera
      */
     void delete_cam(void);
-    /**
-     * @brief delete the picture
-     * delete the picture
-     */
-    void delete_pic(void);
 };
 
 

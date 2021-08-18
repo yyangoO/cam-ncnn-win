@@ -42,13 +42,8 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
     private Bitmap my_selected_image = null;
 
     PopupWindow _popup_window;
-    TextView _ncnn_datatype_textview;
-    TextView _ncnn_result_textview;
-    Button _album_button;
-    Button _choose_button;
+    Button _clean_button;
     Button _camera_button;
-    Button _init_button;
-    Button _detect_button;
 
     @Override
     public void onCreate(Bundle savedInstanceState)
@@ -108,35 +103,6 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
         }
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data)
-    {
-        super.onActivityResult(requestCode, resultCode, data);
-
-        if (resultCode == RESULT_OK && null != data)
-        {
-            Uri selected_image = data.getData();
-
-            try
-            {
-                if (requestCode == SELECT_IMAGE) {
-                    Bitmap bitmap = decodeUri(selected_image);
-
-                    Bitmap rgba = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-
-                    my_selected_image = Bitmap.createScaledBitmap(rgba, 1080, 1920, false);
-
-                    rgba.recycle();
-                }
-            }
-            catch (FileNotFoundException e)
-            {
-                Log.e("MainActivity", "FileNotFoundException");
-                return;
-            }
-        }
-    }
-
     private boolean isCamera2Device()
     {
         CameraManager camMgr = (CameraManager)getSystemService(Context.CAMERA_SERVICE);
@@ -165,32 +131,6 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
         }
 
         return camera2Dev;
-    }
-
-    private Bitmap decodeUri(Uri selectedImage) throws FileNotFoundException
-    {
-        BitmapFactory.Options o = new BitmapFactory.Options();
-        o.inJustDecodeBounds = true;
-        BitmapFactory.decodeStream(getContentResolver().openInputStream(selectedImage), null, o);
-
-        final int REQUIRED_SIZE = 400;
-
-        int width_tmp = o.outWidth, height_tmp = o.outHeight;
-        int scale = 1;
-        while (true)
-        {
-            if (width_tmp / 2 < REQUIRED_SIZE || height_tmp / 2 < REQUIRED_SIZE)
-            {
-                break;
-            }
-            width_tmp /= 2;
-            height_tmp /= 2;
-            scale *= 2;
-        }
-
-        BitmapFactory.Options o2 = new BitmapFactory.Options();
-        o2.inSampleSize = scale;
-        return BitmapFactory.decodeStream(getContentResolver().openInputStream(selectedImage), null, o2);
     }
 
     public void RequestCamera()
@@ -270,37 +210,15 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
                     _popup_window.showAtLocation(mainLayout, Gravity.BOTTOM | Gravity.START, 0, 0);
                     _popup_window.update();
 
-                    _ncnn_datatype_textview = (TextView) popup_view.findViewById(R.id.currrent_ncnn_data_type);
-                    _ncnn_result_textview = (TextView) popup_view.findViewById(R.id.detect_result);
-
-                    _choose_button = (Button) popup_view.findViewById(R.id.button_choose);
-                    _choose_button.setOnClickListener(new View.OnClickListener() {
+                    _clean_button = (Button) popup_view.findViewById(R.id.button_clean);
+                    _clean_button.setOnClickListener(new View.OnClickListener() {
                         @Override
                         public void onClick(View v)
                         {
-                            Intent i = new Intent(Intent.ACTION_PICK);
-                            i.setType("image/*");
-                            startActivityForResult(i, SELECT_IMAGE);
+                            ChooseClean();
                         }
                     });
-                    _choose_button.setEnabled(true);
-
-                    _album_button = (Button) popup_view.findViewById(R.id.button_album);
-                    _album_button.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View v)
-                        {
-                            if (my_selected_image == null)
-                            {
-                                _ncnn_datatype_textview.setText("didn't choose a picture ");
-                                return;
-                            }
-                            ChooseAlbum(my_selected_image);
-
-                            _ncnn_datatype_textview.setText("currrent ncnn data source: album ");
-                        }
-                    });
-                    _album_button.setEnabled(true);
+                    _clean_button.setEnabled(true);
 
                     _camera_button = (Button) popup_view.findViewById(R.id.button_camera);
                     _camera_button.setOnClickListener(new View.OnClickListener() {
@@ -308,32 +226,9 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
                         public void onClick(View v)
                         {
                             ChooseCamera();
-                            _ncnn_datatype_textview.setText("currrent ncnn data source: camera ");
                         }
                     });
                     _camera_button.setEnabled(true);
-
-                    _init_button = (Button) popup_view.findViewById(R.id.button_init);
-                    _init_button.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View v)
-                        {
-                            NetworkInit(getAssets());
-                            _ncnn_result_textview.setText("ncnn initialization succeed, waiting for choosing source... ");
-                        }
-                    });
-                    _init_button.setEnabled(true);
-
-                    _detect_button = (Button) popup_view.findViewById(R.id.button_squeezenet);
-                    _detect_button.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View v)
-                        {
-                            NetworkDetect();
-                            _ncnn_result_textview.setText("ncnn detect result: null ");
-                        }
-                    });
-                    _detect_button.setEnabled(true);
                 }
                 catch (WindowManager.BadTokenException e)
                 {
@@ -342,10 +237,8 @@ public class MainActivity extends NativeActivity implements ActivityCompat.OnReq
             }});
     }
 
-    native static void ChooseAlbum(Bitmap bitmap);
+    native static void ChooseClean();
     native static void ChooseCamera();
-    native static void NetworkInit(AssetManager mgr);
-    native static void NetworkDetect();
     private native static void NotifyCameraPermission(boolean granted);
 
     static

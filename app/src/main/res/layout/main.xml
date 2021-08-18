@@ -5,76 +5,31 @@
     android:gravity="bottom"
     android:orientation="vertical" >
 
-    <ImageView
-        android:id="@+id/image_logo"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:src="@drawable/ncnn" />
-
-    <TextView
-        android:id="@+id/currrent_ncnn_data_type"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_alignParentLeft="true"
-        android:layout_weight="1"
-        android:text="currrent ncnn data source: null "
-        android:textColor="#4CAF50"
-        android:textSize="15sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/detect_result"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_alignParentLeft="true"
-        android:layout_weight="1"
-        android:text="waiting for ncnn initialization... "
-        android:textColor="#4CAF50"
-        android:textSize="15sp"
-        android:textStyle="bold" />
-
     <LinearLayout
-        android:id="@+id/button_opts"
         android:orientation="horizontal"
         android:layout_width="fill_parent"
-        android:layout_height="wrap_content"
-        android:layout_weight="1">
-
-       <Button
-            android:id="@+id/button_choose"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="open" />
-
-        <Button
-            android:id="@+id/button_init"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="init" />
-
-        <Button
-            android:id="@+id/button_album"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="album" />
+        android:layout_height="wrap_content">
 
         <Button
             android:id="@+id/button_camera"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="cam" />
+            android:text="camera (VkImageMat)" />
 
         <Button
-            android:id="@+id/button_squeezenet"
+            android:id="@+id/button_clean"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="detect" />
+            android:text="clean (VkMat)" />
+
+        <ImageView
+            android:id="@+id/image_logo"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:src="@drawable/ncnn" />
 
     </LinearLayout>
 
