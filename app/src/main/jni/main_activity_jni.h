@@ -423,17 +423,11 @@ public:
      */
     void init_img(ImageFormat res);
     /**
-     * @brief get image
-     * get image
-     * @return          hadrwarebuffer
+     * @brief get next image
+     * get next image
+     * @return          the next image
      */
-    AHardwareBuffer* get_img_hb(void);
-    /**
-     * @brief get the image's resolution
-     * get image's resolution
-     * @return      the image format
-     */
-    ImageFormat get_img_res(void);
+    AImage* get_next_img(void);
     /**
      * @brief get camera manager listener
      * get camera manager listener
@@ -459,44 +453,6 @@ public:
      */
     void image_callback(AImageReader* reader);
 };
-
-
-
-///**
-// * @brief ncnn network
-// * the ncnn network
-// */
-//class NcnnNet
-//{
-//private:
-//    ncnn::Net* _network;            ///< the network
-//    bool _net_param_ready_flag;     ///< network parameter ready flag
-//    bool _net_model_ready_flag;     ///< network model ready flag
-//    bool _use_vkimagemat_flag;      ///< is the ncnn gpu device use VkImageMat enstore the data, if false, use VkMat
-//    int _default_gpu_index;         ///< default gpu index
-//    ncnn::VulkanDevice* _vkdev;     ///< vulkan device
-//    ncnn::VkCompute* _cmd;          ///< vulkan command
-//
-//public:
-//    /**
-//     * @brief construction
-//     * construction function
-//     */
-//    NcnnNet(void);
-//    /**
-//     * @brief destruction
-//     * destruction function
-//     */
-//    ~NcnnNet(void);
-//    /**
-//     * @brief detection
-//     * detection function
-//     * @param hb        the data
-//     * @param res       the data's resolution
-//     * @return          the detect result
-//     */
-//    AHardwareBuffer* detect(AHardwareBuffer* hb, ImageFormat res);
-//};
 
 
 /**
