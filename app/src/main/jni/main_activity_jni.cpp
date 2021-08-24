@@ -808,20 +808,13 @@ void AppEngine::show_camera(void)
     AHardwareBuffer_Desc in_hb_desc;
 
     AHardwareBuffer_describe(in_hb, &in_hb_desc);
-
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AAAAAAAAAAAAAAAAAAA%d", in_hb_desc.width);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "BBBBBBBBBBBBBBBBBBB%d", in_hb_desc.height);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "CCCCCCCCCCCCCCCCCCC%d", in_hb_desc.format);
-
-
-
     in_hb_desc.width = res.width;
     in_hb_desc.height = res.height;
     in_hb_desc.format = res.format;
     in_hb_desc.rfu0 = 0;
     in_hb_desc.rfu1 = 0;
     in_hb_desc.layers = 1;
-    in_hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN | AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+    in_hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_WRITE_MASK;
     ret = AHardwareBuffer_allocate(&in_hb_desc, &in_hb);
     if (ret < 0)
         __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_allocate -> %d", ret);
@@ -829,69 +822,60 @@ void AppEngine::show_camera(void)
 
 
 
-    ncnn::VkAndroidHardwareBufferImageAllocator* ahbi_allocator = new ncnn::VkAndroidHardwareBufferImageAllocator(this->_vkdev, in_hb);
+    ncnn::VkAndroidHardwareBufferImageAllocator* ahbi_allocator = new ncnn::VkAndroidHardwareBufferImageAllocator(this->_vkdev, this->_bk_hb);
     ncnn::vkMemoryAndroidHardwareBufferAllocator* mahb_allocator = new ncnn::vkMemoryAndroidHardwareBufferAllocator(this->_vkdev);
 
 
+    ncnn::VkMat in_mat;
+    in_mat.create(1080, 1920, 4, 1, 1, ahbi_allocator);
+//    ncnn::VkImageMat in_img_mat;
+//    in_img_mat.create(1080, 1920, 4, 1, 1, ahbi_allocator);
 
-    ncnn::VkImageMat in_mat;
-    in_mat.create(1080, 1920, 3, 1, 1, ahbi_allocator);
+//    ncnn::VkMat temp_img_mat;
+//    temp_img_mat.create(1080, 1920, 4, 1, 1, this->_vkdev->acquire_blob_allocator());
+    ncnn::VkImageMat temp_img_mat;
+    ncnn::VkImageMat out_img_mat;
+//    out_img_mat.create(1080, 1920, 4, 1, 1, mahb_allocator);
 
-    ncnn::VkMat out_mat;
-    out_mat.create(1080, 1920, 4, 1, 1, mahb_allocator);
+//    ncnn::ImportAndroidHardwareBufferPipeline* im_pipeline = new ncnn::ImportAndroidHardwareBufferPipeline(this->_vkdev);
+//    im_pipeline->create(ahbi_allocator, 4, 1, this->_network->opt);
+//    ncnn::ExportAndroidHardwareBufferPipeline* ex_pipeline = new ncnn::ExportAndroidHardwareBufferPipeline(this->_vkdev);
+//    ex_pipeline->create(mahb_allocator, 4, 1, this->_network->opt);
 
-
-    ncnn::ImportAndroidHardwareBufferPipeline* pipeline = new ncnn::ImportAndroidHardwareBufferPipeline(this->_vkdev);
-    pipeline->create(ahbi_allocator, 4, 1, this->_network->opt);
-
-    this->_cmd->record_import_android_hardware_buffer(pipeline, in_mat, out_mat);
+//    this->_cmd->record_import_android_hardware_buffer(im_pipeline, in_img_mat, temp_img_mat);
+    this->_network->opt.blob_vkallocator = this->_vkdev->acquire_blob_allocator();
+    this->_network->opt.staging_vkallocator = this->_vkdev->acquire_blob_allocator();
+    this->_cmd->record_clone(in_mat, temp_img_mat, this->_network->opt);
+    this->_network->opt.blob_vkallocator = mahb_allocator;
+    this->_network->opt.staging_vkallocator = mahb_allocator;
+    this->_cmd->record_clone(temp_img_mat, out_img_mat, this->_network->opt);
+//    this->_cmd->record_export_android_hardware_buffer(ex_pipeline, temp_img_mat, out_img_mat);
     this->_cmd->submit_and_wait();
     this->_cmd->reset();
 
 
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AAAAAAAAAAAAAAAAAAA%d", temp_mat.w);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "BBBBBBBBBBBBBBBBBBB%d", temp_mat.h);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "CCCCCCCCCCCCCCCCCCC%d", temp_mat.c);
 
-
-
-    AHardwareBuffer* out_hb = mahb_allocator->buffer_hb();
-//
-//
-//    AHardwareBuffer_Desc bufferDesc;
-//    bufferDesc.width = 1920 * 1080 * 3;
-//    bufferDesc.height = 1;
-//    bufferDesc.format = AHARDWAREBUFFER_FORMAT_BLOB;
-//    bufferDesc.rfu0 = 0;
-//    bufferDesc.rfu1 = 0;
-//    bufferDesc.layers = 1;
-//    bufferDesc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_MASK | AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER;
-//    AHardwareBuffer_allocate(&bufferDesc, &out_hb);
-
+    AHardwareBuffer* out_hb = mahb_allocator->image_hb();
 
     AHardwareBuffer_Desc out_hb_desc;
     AHardwareBuffer_describe(out_hb, &out_hb_desc);
 
-
-
-
-
-
-
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AAAAAAAAAAAAAAAAAAA%d", out_mat.w);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "BBBBBBBBBBBBBBBBBBB%d", out_mat.h);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "CCCCCCCCCCCCCCCCCCC%d", out_mat.c);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "DDDDDDDDDDDDDDDDDDD%d", out_mat.dims);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "EEEEEEEEEEEEEEEEEEE%d", out_mat.elemsize);
-//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "FFFFFFFFFFFFFFFFFFF%d", out_mat.elempack);
-
-
-
+//    out_hb_desc.width = res.width;
+//    out_hb_desc.height = res.height;
+//    out_hb_desc.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+//    out_hb_desc.rfu0 = 0;
+//    out_hb_desc.rfu1 = 0;
+//    out_hb_desc.layers = 1;
+//    out_hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN;
+//    ret = AHardwareBuffer_allocate(&out_hb_desc, &out_hb);
+//    if (ret < 0)
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_allocate -> %d", ret);
 
 
     __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AAAAAAAAAAAAAAAAAAA%d", out_hb_desc.width);
     __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "BBBBBBBBBBBBBBBBBBB%d", out_hb_desc.height);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "CCCCCCCCCCCCCCCCCCC%d", out_hb_desc.usage == (AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER));
+    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "CCCCCCCCCCCCCCCCCCC%d", out_hb_desc.format);
+    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "DDDDDDDDDDDDDDDDDDD%d", out_hb_desc.usage == 0);
 
 
 
@@ -911,11 +895,16 @@ void AppEngine::show_camera(void)
     if (ret < 0)
         __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::draw_frame AHardwareBuffer_lock -> %d", ret);
 
-    uint32_t* show_data = static_cast<uint32_t*>(out_data);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX1   %d", show_data[0]);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX2   %d", show_data[1]);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX3   %d", show_data[2]);
-    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX4   %d", show_data[3]);
+//    uint32_t* show_data = static_cast<uint32_t*>(this->_bk_img);
+//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX1");
+//    for (int i = 0; i < 1920 * 1080; i++)
+//    {
+//        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "%d,    %d", i, show_data[i]);
+//    }
+//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX1   %d", show_data[0]);
+//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX2   %d", show_data[1]);
+//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX3   %d", show_data[2]);
+//    __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX4   %d", show_data[3]);
     memcpy(nativewindow_buf.bits, out_data, (this->_img_res.width * this->_img_res.height * 4));
 
     ret = AHardwareBuffer_unlock(out_hb, NULL);
@@ -935,9 +924,11 @@ void AppEngine::show_camera(void)
 
 
 
-    pipeline->destroy();
-    delete pipeline;
+//    im_pipeline->destroy();
+//    delete im_pipeline;
+//    delete ex_pipeline;
     delete ahbi_allocator;
+    delete mahb_allocator;
 }
 
 void AppEngine::show_background()
