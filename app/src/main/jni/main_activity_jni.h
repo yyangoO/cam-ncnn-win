@@ -5,6 +5,7 @@
 #include <android/log.h>
 #include <android_native_app_glue.h>
 #include <android/native_window.h>
+#include <android/native_window_jni.h>
 #include <android/asset_manager_jni.h>
 #include <android/log.h>
 #include <camera/NdkCameraManager.h>
@@ -12,7 +13,6 @@
 #include <camera/NdkCameraDevice.h>
 #include <camera/NdkCameraMetadataTags.h>
 #include <media/NdkImageReader.h>
-#include <android/bitmap.h>
 
 #include <functional>
 #include <thread>
@@ -25,6 +25,17 @@
 #include "benchmark.h"
 
 #include "jni.h"
+
+
+#define LOG_TAG "CAM2NCNN2WIN"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define ASSERT(cond, fmt, ...)                                          \
+    if (!(cond))                                                        \
+    {                                                                   \
+        __android_log_assert(#cond, LOG_TAG, fmt, ##__VA_ARGS__);       \
+    }
 
 
 /**
@@ -44,9 +55,9 @@ enum PREVIEW_INDICES
  */
 enum class CaptureSessionState : int32_t
 {
-    READY = 0,  ///< session is ready
-    ACTIVE,     ///< session is busy
-    CLOSED,     ///< session is closed (by itself or a new session evicts)
+    READY = 0,      ///< session is ready
+    ACTIVE,         ///< session is busy
+    CLOSED,         ///< session is closed (by itself or a new session evicts)
     MAX_STATE
 };
 
@@ -89,6 +100,7 @@ public:
     T min_;     ///< miminum value
     T max_;     ///< maximum value
 
+public:
     /**
      * @brief get the value's percent in range
      * this template return the value's percent in range
@@ -129,7 +141,6 @@ class CameraId
 {
 public:
     ACameraDevice* device_;                                 ///< android camera device
-
     std::string id_;                                        ///< camera ID
     acamera_metadata_enum_android_lens_facing_t facing_;    ///< android camera's facing direction
     bool available_flag_;                                   ///< free to use (no other apps are using)
@@ -141,10 +152,10 @@ public:
      * initialize the attributes of this class
      */
     explicit CameraId(const char* id)
-            : device_(nullptr),
-              facing_(ACAMERA_LENS_FACING_FRONT),
-              available_flag_(false),
-              own_flag_(false)
+        : device_(nullptr),
+          facing_(ACAMERA_LENS_FACING_FRONT),
+          available_flag_(false),
+          own_flag_(false)
     {
         id_ = id;
     }
@@ -268,7 +279,7 @@ public:
      * check the portrait flag
      * @return      the portrait flag
      */
-    bool IsPortrait(void)
+    bool is_portrait(void)
     {
         return this->_portrait_flag;
     }
@@ -323,25 +334,19 @@ private:
     std::string _active_cam_id;                                         ///< active camera ID
     uint32_t _cam_facing;                                               ///< camera's facing
     uint32_t _cam_orientation;                                          ///< camera's orientation
-
     std::vector<CaptureRequestInfo> _requests;                          ///< android camera capture request information
-
     ACaptureSessionOutputContainer* _output_container;                  ///< need to receive image stream
     ACameraCaptureSession* _capture_session;                            ///< capture session
     CaptureSessionState _capture_session_state;                         ///< capture session's state
-
     int64_t _exposure_time;                                             ///< camera exposure time
     RangeValue<int64_t> _exposure_range;                                ///< camera exposure range
     int32_t _sensitivity;                                               ///< camera sensitivity
     RangeValue<int32_t> _sensitivity_range;                             ///< camera sensivity range
     volatile bool _valid_flag;                                          ///< true if camera valid
-
     AImageReader* _reader;                                              ///< the android image reader
     std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
     void* _callback_ctx;                                                ///< the callback function pointer
-
-    ANativeWindow* _native_window;                                      ///< native window
-    AHardwareBuffer* _hb;                                               ///< the hardwarebuffer
+    ANativeWindow* _imagereader_nwin;                                   ///< the native window for image reader
     ImageFormat _img_res;                                               ///< iamge format
 
 private:
@@ -365,11 +370,10 @@ public:
     /**
      * @brief get the capture size we request
      * get the capture size we request
-     * @param display       the {@link ANativeWindow} pointer we want to display
-     * @param view          the {@link ImageFormat} we want to view
+     * @param view          the resolution and format we want to view
      * @return              true on success, false on failure
      */
-    bool get_capture_size(ANativeWindow* display, ImageFormat* view);
+    bool get_capture_size(ImageFormat* view);
     /**
      * @brief create a capture session
      * create a capture session of camera
@@ -417,17 +421,22 @@ public:
      */
     void start_request(bool start);
     /**
-     * @brief init the camera image
-     * init the camera image
-     * @param res       image resolution
+     * @brief create the image reader
+     * create the image reader
+     * @param res       image resolution and format
      */
-    void init_img(ImageFormat res);
+    void create_imagereader(ImageFormat res);
     /**
-     * @brief get next image
-     * get next image
+     * @brief destory the image reader
+     * destory the image reader
+     */
+    void destory_imagereader(void);
+    /**
+     * @brief get image
+     * get the next image
      * @return          the next image
      */
-    AImage* get_next_img(void);
+    AImage* get_image(void);
     /**
      * @brief get camera manager listener
      * get camera manager listener
@@ -462,47 +471,36 @@ public:
 class AppEngine
 {
 private:
-    struct android_app* _app;           ///< android app pointer
-    ImageFormat _native_win_res;        ///< saved native window
+    ImageFormat _win_res;               ///< window resolution
     ImageFormat _img_res;               ///< image resolution
-    int _rotation;                      ///< rotation
-    NDKCamera* _cam;                    ///< camera
-    bool _cam_granted_flag;             ///< granted camera or not
-    bool _cam_ready_flag;               ///< app camera ready flag
-    AHardwareBuffer* _win_hb;           ///< window hardwarebuffer
-    void* _bk_img;                      ///< background image
-    AHardwareBuffer* _bk_hb;            ///< background image hardwarebuffer
+    NDKCamera* _camera;                 ///< camera
+    AHardwareBuffer* _buffer;           ///< camera image hardwarebuffer
+    void* _bk_img;                      ///< background image pointer
+
+    bool _camera_ready_flag;            ///< camera ready flay
+
+    ANativeWindow* _native_window;      ///< the native window we display image
 
     ncnn::Net* _network;                ///< ncnn
     ncnn::VulkanDevice* _vkdev;         ///< vulkan device
     ncnn::VkCompute* _cmd;              ///< vulkan command
 
-private:
-    /**
-     * @brief get the android app's display rotation
-     * get the android app's display rotation
-     * @return      the rotation
-     */
-    int get_display_rotation(void);
-
 public:
     /**
      * @brief construction
      * construction function
-     * @param app       android app
      */
-    explicit AppEngine(android_app* app);
+    AppEngine(void);
     /**
      * @brief destruction
      * destruction function
      */
     ~AppEngine(void);
     /**
-     * @brief the interface to android app
-     * the interface to android app
-     * @return      android app pointer
+     * @brief set the output nativie window
+     * set the native window we want to display
      */
-    struct android_app* interface_2_android_app(void) const;
+    void set_disp_window(ANativeWindow* native_window);
     /**
      * @brief handle Android System APP_CMD_INIT_WINDOW message
      * request camera persmission from Java side
@@ -519,52 +517,10 @@ public:
      */
     void on_app_term_window(void);
     /**
-     * @brief get the native window width
-     * get the native window width
-     * @return      the width
-     */
-    int32_t get_native_win_width(void);
-    /**
-     * @brief get the native window height
-     * get the native window height
-     * @return      the height
-     */
-    int32_t get_native_win_height(void);
-    /**
-     * @brief get the native window format
-     * get the native window format
-     * @return      the format
-     */
-    int32_t get_native_win_format(void);
-    /**
-     * @brief get the native window resource
-     * get the native window's width, height , format
-     * @param w         width
-     * @param h         height
-     * @param format    the format
-     */
-    void set_native_win_res(int32_t w, int32_t h, int32_t format);
-    /**
-     * @brief request camera permissin
-     * request camera permissin
-     */
-    void request_cam_permission(void);
-    /**
-     * @brief get camera permission
-     * get camera permission
-     * @param granted       is granted or not
-     */
-    void on_cam_permission(jboolean granted);
-    /**
      * @brief enable the UI
      * enable the user interface
      */
     void enable_ui(void);
-    /**
-     * @brief initalize the background
-     * initalize the background
-     */
-    void init_background(void);
     /**
      * @brief draw the frame
      * draw the frame
@@ -584,13 +540,15 @@ public:
     /**
      * @brief craete the camera
      * craete the camera
+     * @param width     the width of image
+     * @param height    the height of image
      */
-    void create_cam(void);
+    void create_camera(int width, int height);
     /**
      * @brief delete the camera
      * delete the camera
      */
-    void delete_cam(void);
+    void delete_camera(void);
 };
 
 
