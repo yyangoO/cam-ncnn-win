@@ -7,11 +7,14 @@
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
 #include <android/asset_manager_jni.h>
+#include <android/hardware_buffer.h>
+#include <android/native_activity.h>
 #include <android/log.h>
 #include <camera/NdkCameraManager.h>
 #include <camera/NdkCameraError.h>
 #include <camera/NdkCameraDevice.h>
 #include <camera/NdkCameraMetadataTags.h>
+#include <android/hardware_buffer.h>
 #include <media/NdkImageReader.h>
 
 #include <functional>
@@ -172,9 +175,9 @@ public:
  */
 class DisplayDimension
 {
-private:
-    int32_t _w;             ///< width
-    int32_t _h;             ///< height
+public:
+    int32_t w_;             ///< width
+    int32_t h_;             ///< height
     bool _portrait_flag;    ///< portrait
 public:
     /**
@@ -183,12 +186,12 @@ public:
      * @param w     the width
      * @param h     the height
      */
-    DisplayDimension(int32_t w, int32_t h) : _w(w), _h(h), _portrait_flag(false)
+    DisplayDimension(int32_t w, int32_t h) : w_(w), h_(h), _portrait_flag(false)
     {
         if (h > w) {
             // make it landscape
-            this->_w = h;
-            this->_h = w;
+            this->w_ = h;
+            this->h_ = w;
             this->_portrait_flag = true;
         }
     }
@@ -199,8 +202,8 @@ public:
      */
     DisplayDimension(const DisplayDimension& other)
     {
-        this->_w = other._w;
-        this->_h = other._h;
+        this->w_ = other.w_;
+        this->h_ = other.h_;
         this->_portrait_flag = other._portrait_flag;
     }
     /**
@@ -209,8 +212,8 @@ public:
      */
     DisplayDimension(void)
     {
-        this->_w = 0;
-        this->_h = 0;
+        this->w_ = 0;
+        this->h_ = 0;
         this->_portrait_flag = false;
     }
     /**
@@ -220,8 +223,8 @@ public:
      */
     DisplayDimension& operator=(const DisplayDimension& other)
     {
-        this->_w = other._w;
-        this->_h = other._h;
+        this->w_ = other.w_;
+        this->h_ = other.h_;
         this->_portrait_flag = other._portrait_flag;
         return (*this);
     }
@@ -233,7 +236,7 @@ public:
      */
     bool is_same_ratio(DisplayDimension& other)
     {
-        return (this->_w * other._h == this->_h * other._w);
+        return (this->w_ * other.h_ == this->h_ * other.w_);
     }
     /**
      * @brief check if it is bigger than other
@@ -243,7 +246,7 @@ public:
      */
     bool operator>(DisplayDimension& other)
     {
-        return (this->_w >= other._w && this->_h >= other._h);
+        return (this->w_ >= other.w_ && this->h_ >= other.h_);
     }
     /**
      * @brief check if it is equal with other
@@ -253,7 +256,7 @@ public:
      */
     bool operator==(DisplayDimension& other)
     {
-        return (this->_w == other._w && this->_h == other._h && this->_portrait_flag == other._portrait_flag);
+        return (this->w_ == other.w_ && this->h_ == other.h_ && this->_portrait_flag == other._portrait_flag);
     }
     /**
      * @brief get the short of two value
@@ -263,7 +266,7 @@ public:
      */
     DisplayDimension operator-(DisplayDimension& other)
     {
-        DisplayDimension delta(this->_w - other._w, this->_h - other._h);
+        DisplayDimension delta(this->w_ - other.w_, this->h_ - other.h_);
         return delta;
     }
     /**
@@ -290,7 +293,7 @@ public:
      */
     int32_t width(void)
     {
-        return this->_w;
+        return this->w_;
     }
     /**
      * @brief get the height
@@ -299,7 +302,7 @@ public:
      */
     int32_t height(void)
     {
-        return this->_h;
+        return this->h_;
     }
     /**
      * @brief origin by the width
@@ -308,7 +311,7 @@ public:
      */
     int32_t org_width(void)
     {
-        return (this->_portrait_flag ? this->_h : this->_w);
+        return (this->_portrait_flag ? this->h_ : this->w_);
     }
     /**
      * @brief origin by the height
@@ -317,7 +320,7 @@ public:
      */
     int32_t org_height(void)
     {
-        return (this->_portrait_flag ? this->_w : this->_h);
+        return (this->_portrait_flag ? this->w_ : this->h_);
     }
 };
 
@@ -343,11 +346,6 @@ private:
     int32_t _sensitivity;                                               ///< camera sensitivity
     RangeValue<int32_t> _sensitivity_range;                             ///< camera sensivity range
     volatile bool _valid_flag;                                          ///< true if camera valid
-    AImageReader* _reader;                                              ///< the android image reader
-    std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
-    void* _callback_ctx;                                                ///< the callback function pointer
-    ANativeWindow* _imagereader_nwin;                                   ///< the native window for image reader
-    ImageFormat _img_res;                                               ///< iamge format
 
 private:
     /**
@@ -377,8 +375,9 @@ public:
     /**
      * @brief create a capture session
      * create a capture session of camera
+     * @param native_window     the native window we enstore image of camera
      */
-    void create_session(void);
+    void create_session(ANativeWindow* native_window);
     /**
      * @brief get sensor orientatioin
      * get current sensor's orientation
@@ -417,26 +416,9 @@ public:
     /**
      * @brief start request image
      * start request image
-     * @param start       start flag
+     * @param flag        start flag
      */
-    void start_request(bool start);
-    /**
-     * @brief create the image reader
-     * create the image reader
-     * @param res       image resolution and format
-     */
-    void create_imagereader(ImageFormat res);
-    /**
-     * @brief destory the image reader
-     * destory the image reader
-     */
-    void destory_imagereader(void);
-    /**
-     * @brief get image
-     * get the next image
-     * @return          the next image
-     */
-    AImage* get_image(void);
+    void request(bool flag);
     /**
      * @brief get camera manager listener
      * get camera manager listener
@@ -455,12 +437,6 @@ public:
      * @return      the callback
      */
     ACameraCaptureSession_stateCallbacks* get_session_listener();
-    /**
-     * @brief image reader's callback
-     * image reader's callback
-     * @param reader     the image reader
-     */
-    void image_callback(AImageReader* reader);
 };
 
 
@@ -471,19 +447,22 @@ public:
 class AppEngine
 {
 private:
-    ImageFormat _win_res;               ///< window resolution
-    ImageFormat _img_res;               ///< image resolution
-    NDKCamera* _camera;                 ///< camera
-    AHardwareBuffer* _buffer;           ///< camera image hardwarebuffer
-    void* _bk_img;                      ///< background image pointer
+    ImageFormat _surface_res;                                           ///< window resolution
+    ImageFormat _camera_res;                                            ///< camera resolution
+    NDKCamera* _camera;                                                 ///< camera
+    AHardwareBuffer* _buffer;                                           ///< camera image hardwarebuffer
+    bool _camera_ready_flag;                                            ///< camera ready flag
 
-    bool _camera_ready_flag;            ///< camera ready flay
+    ANativeWindow* _camera_nwin;                                        ///< the native window we enstore camera
+    ANativeWindow* _surface_nwin;                                       ///< the native window we display image
 
-    ANativeWindow* _native_window;      ///< the native window we display image
+    AImageReader* _reader;                                              ///< the android image reader
+    std::function<void(void *ctx, const char* fileName)> _callback;     ///< the callback function
+    void* _callback_ctx;                                                ///< the callback function pointer
 
-    ncnn::Net* _network;                ///< ncnn
-    ncnn::VulkanDevice* _vkdev;         ///< vulkan device
-    ncnn::VkCompute* _cmd;              ///< vulkan command
+    ncnn::Net* _network;                                                ///< ncnn
+    ncnn::VulkanDevice* _vkdev;                                         ///< vulkan device
+    ncnn::VkCompute* _cmd;                                              ///< vulkan command
 
 public:
     /**
@@ -502,53 +481,26 @@ public:
      */
     void set_disp_window(ANativeWindow* native_window);
     /**
-     * @brief handle Android System APP_CMD_INIT_WINDOW message
-     * request camera persmission from Java side
+     * @brief draw the surface
+     * draw the surface
      */
-    void on_app_init_window(void);
-    /**
-     * @brief handle android app's request
-     * configure the changes
-     */
-    void on_app_config_change(void);
-    /**
-     * @brief handle android app's request
-     * terminate the native window
-     */
-    void on_app_term_window(void);
-    /**
-     * @brief enable the UI
-     * enable the user interface
-     */
-    void enable_ui(void);
-    /**
-     * @brief draw the frame
-     * draw the frame
-     * @param show_cam      show the camera or not
-     */
-    void draw_frame(bool show_cam);
-    /**
-     * @brief draw the camera
-     * draw the camera
-     */
-    void show_camera(void);
-    /**
-     * @brief clean the window with background as green
-     * clean the window with background as green
-     */
-    void show_background(void);
+    void draw_surface(void);
     /**
      * @brief craete the camera
      * craete the camera
-     * @param width     the width of image
-     * @param height    the height of image
      */
-    void create_camera(int width, int height);
+    void create_camera(void);
     /**
      * @brief delete the camera
      * delete the camera
      */
     void delete_camera(void);
+    /**
+     * @brief image reader's callback
+     * image reader's callback
+     * @param reader     the image reader
+     */
+    void image_callback(AImageReader* reader);
 };
 
 

@@ -39,8 +39,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         cam_view_ = (SurfaceView) findViewById(R.id.camera_view);
         cam_view_.getHolder().setFormat(PixelFormat.RGBA_8888);
         cam_view_.getHolder().addCallback(this);
-        closeCamera();
-        openCamera(cam_view_.getWidth(), cam_view_.getHeight());
     }
 
     @Override
@@ -67,7 +65,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         {
             ActivityCompat.requestPermissions(this, new String[] {Manifest.permission.CAMERA}, REQUEST_CAMERA);
         }
-        openCamera(cam_view_.getWidth(), cam_view_.getHeight());
+        openCamera();
     }
 
     @Override
@@ -77,7 +75,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback
         closeCamera();
     }
 
-    public native boolean openCamera(int width, int height);
+    public native boolean openCamera();
     private native void closeCamera();
     public native boolean setOutputWindow(Surface surface);
 
