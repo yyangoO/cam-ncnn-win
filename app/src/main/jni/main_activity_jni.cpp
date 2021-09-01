@@ -1,7 +1,7 @@
 #include "main_activity_jni.h"
 
 
-#define MAX_BUF_COUNT 4     ///< max buffers in this ImageReader
+#define MAX_BUF_COUNT 2     ///< max buffers in this ImageReader
 
 
 static const uint64_t k_min_exposure_time = static_cast<uint64_t>(1000000);
@@ -130,6 +130,10 @@ void AppEngine::image_callback(AImageReader *reader)
     int32_t format;
     status = AImageReader_getFormat(reader, &format);
     ASSERT(!status, "NDKCamera::image_callback AImageReader_getFormat -> %d", status);
+    if (format != AIMAGE_FORMAT_YUV_420_888)
+    {
+        LOGE("AppEngine::image_callback -> wrong format! ");
+    }
 }
 
 
@@ -530,6 +534,7 @@ AppEngine::AppEngine(void)
       _network(nullptr),
       _vkdev(nullptr),
       _cmd(nullptr),
+      _render_pipline(nullptr),
       _reader(nullptr),
       _camera_nwin(nullptr),
       _surface_nwin(nullptr),
@@ -551,6 +556,7 @@ AppEngine::AppEngine(void)
     opt.staging_vkallocator = staging_vkallocator;
     opt.use_vulkan_compute = true;
     this->_network->opt = opt;
+    this->_render_pipline = new ncnn::RenderAndroidNativeWindowPipeline(this->_vkdev);
 }
 
 void AppEngine::create_camera(void)
@@ -621,6 +627,7 @@ void AppEngine::set_disp_window(ANativeWindow* native_window)
     if (this->_surface_nwin)
     {
         ANativeWindow_release(this->_surface_nwin);
+        this->_surface_nwin = nullptr;
     }
     this->_surface_nwin = native_window;
     ANativeWindow_acquire(this->_surface_nwin);
@@ -628,6 +635,8 @@ void AppEngine::set_disp_window(ANativeWindow* native_window)
     this->_surface_res.width = ANativeWindow_getWidth(native_window);
     this->_surface_res.height = ANativeWindow_getHeight(native_window);
     ANativeWindow_setBuffersGeometry(this->_surface_nwin, this->_surface_res.width, this->_surface_res.height, WINDOW_FORMAT_RGBA_8888);
+
+    this->_render_pipline->create(this->_surface_nwin, 1, 1, this->_camera_res.width, this->_camera_res.height, this->_network->opt);
 }
 
 void AppEngine::draw_surface(void)
@@ -638,7 +647,7 @@ void AppEngine::draw_surface(void)
     AImage* image = nullptr;
     ImageFormat res;
 
-    status = AImageReader_acquireLatestImage(this->_reader, &image);
+    status = AImageReader_acquireNextImage(this->_reader, &image);
     ASSERT(!status, "AppEngine::draw_surface AImageReader_acquireLatestImage -> %d", status);
 
     status = AImage_getWidth(image, &res.width);
@@ -650,38 +659,56 @@ void AppEngine::draw_surface(void)
     status = AImage_getFormat(image, &res.format);
     ASSERT(!status, "AppEngine::draw_surface AImage_getFormat -> %d", status);
 
-    LOGI("camera/surface  -> width: %d/%d | height: %d/%d | format: %d/%d", res.width,
-                                                                            this->_surface_res.width,
-                                                                            res.height,
-                                                                            this->_surface_res.height,
-                                                                            res.format,
-                                                                            this->_surface_res.format);
-
     if(this->_surface_nwin)
     {
+        LOGI("camera/surface -> width: %d/%d | height: %d/%d | format: %d/%d",
+             res.width,
+             this->_surface_res.width,
+             res.height,
+             this->_surface_res.height,
+             res.format,
+             this->_surface_res.format);
+
         AHardwareBuffer* hb = nullptr;
 
         status = AImage_getHardwareBuffer(image, &hb);
         ASSERT(!status, "AppEngine::draw_surface AImage_getHardwareBuffer -> %d", status);
 
-        ncnn::VkAndroidHardwareBufferImageAllocator* ahb_im_allocator = new ncnn::VkAndroidHardwareBufferImageAllocator(this->_vkdev, hb);
-        ncnn::ImportAndroidHardwareBufferPipeline* im_pipline = new ncnn::ImportAndroidHardwareBufferPipeline(this->_vkdev);
-        im_pipline->create(ahb_im_allocator, 4, 5, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
-
 //        ncnn::VkImageMat in_mat(1920, 1080, 4, 1, 1, ahb_im_allocator);
-        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 1, 1, ahb_im_allocator);
+//        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 1, 1, &ahb_im_allocator);
 //        in_img_mat.from_android_hardware_buffer(ahb_im_allocator);
-        ncnn::VkMat temp_mat;
-        temp_mat.create_like(in_img_mat, this->_vkdev->acquire_blob_allocator());
-        ncnn::VkImageMat temp_img_mat;
-        temp_img_mat.create_like(temp_img_mat, this->_vkdev->acquire_blob_allocator());
+//        ncnn::VkMat temp_mat;
+//        temp_mat.create_like(in_img_mat, this->_vkdev->acquire_blob_allocator());
+//        ncnn::VkImageMat temp_img_mat;
+//        temp_img_mat.create_like(temp_img_mat, this->_vkdev->acquire_blob_allocator());
 //        this->_cmd->record_import_android_hardware_buffer(im_pipline, in_img_mat, temp_img_mat);
-        this->_cmd->record_import_android_hardware_buffer(im_pipline, in_img_mat, temp_mat);
+//        this->_cmd->record_import_android_hardware_buffer(&im_pipline, in_img_mat, temp_mat);
+//        this->_cmd->record_clone(temp_mat, temp_img_mat, this->_network->opt);
+//        this->_cmd->record_render_android_native_window(&render_pipline, temp_img_mat);
+//        this->_cmd->submit_and_wait();
+//        this->_cmd->reset();
 
-
+//        void* bk_img = malloc(this->_surface_res.width * this->_surface_res.height * 4);
+//        uint32_t* bk_data = static_cast<uint32_t*>(bk_img);
+//        for (int j = 0; j < this->_surface_res.width * this->_surface_res.height; j++)
+//        {
+//            bk_data[j] = 0xff00ff00;
+//        }
+//
 //        ANativeWindow_Buffer nativewindow_buffer;
 //
 //        ANativeWindow_lock(this->_surface_nwin, &nativewindow_buffer, nullptr);
+
+
+//        ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
+//        ncnn::ImportAndroidHardwareBufferPipeline im_pipline(this->_vkdev);
+//        im_pipline.create(&ahb_im_allocator, 4, 5, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
+
+//        ncnn::RenderAndroidNativeWindowPipeline render_pipline(this->_vkdev);
+//        render_pipline.create(this->_surface_nwin, 1, 1, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
+
+
+//        memcpy(nativewindow_buffer.bits, bk_img, (this->_surface_res.width * this->_surface_res.height * 4));
 //        ANativeWindow_unlockAndPost(this->_surface_nwin);
     }
 
@@ -699,9 +726,12 @@ AppEngine::~AppEngine(void)
 /*---------------------------------------------native activity----------------------------------------------*/
 /*----------------------------------------------------------------------------------------------------------*/
 static AppEngine* p_engine = nullptr;
+static ncnn::Mutex lock;
 
 void on_image_callback(void *ctx, AImageReader *reader)
 {
+    ncnn::MutexLockGuard g(lock);
+
     reinterpret_cast<AppEngine *>(ctx)->image_callback(reader);
     p_engine->draw_surface();
 }
