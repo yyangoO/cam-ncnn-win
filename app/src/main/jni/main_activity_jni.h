@@ -462,8 +462,8 @@ private:
 
     ncnn::Net* _network;                                                ///< ncnn
     ncnn::VulkanDevice* _vkdev;                                         ///< vulkan device
-    ncnn::VkCompute* _cmd;                                              ///< vulkan command
-    ncnn::RenderAndroidNativeWindowPipeline* _render_pipline;           ///< render pipeline
+    ncnn::VkCompute* _compute;                                          ///< vulkan compute command
+    ncnn::VkRender* _render;                                            ///< vulkan render command
 
 public:
     /**

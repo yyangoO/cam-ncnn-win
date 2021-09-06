@@ -533,8 +533,8 @@ AppEngine::AppEngine(void)
       _camera_ready_flag(false),
       _network(nullptr),
       _vkdev(nullptr),
-      _cmd(nullptr),
-      _render_pipline(nullptr),
+      _compute(nullptr),
+      _render(nullptr),
       _reader(nullptr),
       _camera_nwin(nullptr),
       _surface_nwin(nullptr),
@@ -547,7 +547,8 @@ AppEngine::AppEngine(void)
     ncnn::create_gpu_instance();
     _network = new ncnn::Net();
     this->_vkdev = ncnn::get_gpu_device();
-    this->_cmd = new ncnn::VkCompute(this->_vkdev);
+    this->_compute = new ncnn::VkCompute(this->_vkdev);
+    this->_render = new ncnn::VkRender(this->_vkdev);
     ncnn::VkAllocator* blob_vkallocator = this->_vkdev->acquire_blob_allocator();
     ncnn::VkAllocator* staging_vkallocator = this->_vkdev->acquire_staging_allocator();
     ncnn::Option opt;
@@ -556,7 +557,6 @@ AppEngine::AppEngine(void)
     opt.staging_vkallocator = staging_vkallocator;
     opt.use_vulkan_compute = true;
     this->_network->opt = opt;
-    this->_render_pipline = new ncnn::RenderAndroidNativeWindowPipeline(this->_vkdev);
 }
 
 void AppEngine::create_camera(void)
@@ -636,7 +636,7 @@ void AppEngine::set_disp_window(ANativeWindow* native_window)
     this->_surface_res.height = ANativeWindow_getHeight(native_window);
     ANativeWindow_setBuffersGeometry(this->_surface_nwin, this->_surface_res.width, this->_surface_res.height, WINDOW_FORMAT_RGBA_8888);
 
-    this->_render_pipline->create(this->_surface_nwin, 1, 1, this->_camera_res.width, this->_camera_res.height, this->_network->opt);
+    this->_render->create(this->_surface_nwin);
 }
 
 void AppEngine::draw_surface(void)
@@ -670,46 +670,49 @@ void AppEngine::draw_surface(void)
              this->_surface_res.format);
 
         AHardwareBuffer* hb = nullptr;
+        AHardwareBuffer_Desc hb_desc;
+
+        hb_desc.width = res.width;
+        hb_desc.height = res.height;
+        hb_desc.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+        hb_desc.rfu0 = 0;
+        hb_desc.rfu1 = 0;
+        hb_desc.layers = 1;
+        hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN | AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+        ret = AHardwareBuffer_allocate(&hb_desc, &hb);
+        if (ret < 0)
+            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_allocate -> %d", ret);
 
         status = AImage_getHardwareBuffer(image, &hb);
         ASSERT(!status, "AppEngine::draw_surface AImage_getHardwareBuffer -> %d", status);
 
-//        ncnn::VkImageMat in_mat(1920, 1080, 4, 1, 1, ahb_im_allocator);
-//        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 1, 1, &ahb_im_allocator);
-//        in_img_mat.from_android_hardware_buffer(ahb_im_allocator);
-//        ncnn::VkMat temp_mat;
-//        temp_mat.create_like(in_img_mat, this->_vkdev->acquire_blob_allocator());
-//        ncnn::VkImageMat temp_img_mat;
-//        temp_img_mat.create_like(temp_img_mat, this->_vkdev->acquire_blob_allocator());
-//        this->_cmd->record_import_android_hardware_buffer(im_pipline, in_img_mat, temp_img_mat);
-//        this->_cmd->record_import_android_hardware_buffer(&im_pipline, in_img_mat, temp_mat);
-//        this->_cmd->record_clone(temp_mat, temp_img_mat, this->_network->opt);
-//        this->_cmd->record_render_android_native_window(&render_pipline, temp_img_mat);
-//        this->_cmd->submit_and_wait();
-//        this->_cmd->reset();
+        ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
+        ncnn::VkR8g8b8a8UnormImageAllocator r8g8b8a8unorm_allocator(this->_vkdev);
 
-//        void* bk_img = malloc(this->_surface_res.width * this->_surface_res.height * 4);
-//        uint32_t* bk_data = static_cast<uint32_t*>(bk_img);
-//        for (int j = 0; j < this->_surface_res.width * this->_surface_res.height; j++)
-//        {
-//            bk_data[j] = 0xff00ff00;
-//        }
-//
-//        ANativeWindow_Buffer nativewindow_buffer;
-//
-//        ANativeWindow_lock(this->_surface_nwin, &nativewindow_buffer, nullptr);
+        ncnn::VkAllocator* vkallocator = this->_vkdev->acquire_blob_allocator();
+
+        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 16, 4, &ahb_im_allocator);
+
+        ncnn::VkMat temp_mat(1920, 1080, 4, 16, 4, vkallocator);
+        ncnn::VkImageMat temp_img_mat;//(1920, 1080, 4, 16, 4, vkallocator);
+
+        ncnn::VkImageMat out_img_mat(1080, 1875, 4, 4, 1, &r8g8b8a8unorm_allocator);
+
+        ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
+        ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
+        import_pipeline.create(&ahb_im_allocator, 1, 5, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
+        convert_pipline.create(1, 1, this->_camera_res.width, this->_camera_res.height, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
+
+        this->_compute->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_mat);
+        this->_compute->record_clone(temp_mat, temp_img_mat, this->_network->opt);
+        this->_compute->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
+        this->_compute->submit_and_wait();
+        this->_compute->reset();
 
 
-//        ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
-//        ncnn::ImportAndroidHardwareBufferPipeline im_pipline(this->_vkdev);
-//        im_pipline.create(&ahb_im_allocator, 4, 5, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
-
-//        ncnn::RenderAndroidNativeWindowPipeline render_pipline(this->_vkdev);
-//        render_pipline.create(this->_surface_nwin, 1, 1, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
-
-
-//        memcpy(nativewindow_buffer.bits, bk_img, (this->_surface_res.width * this->_surface_res.height * 4));
-//        ANativeWindow_unlockAndPost(this->_surface_nwin);
+        this->_render->record_image(out_img_mat);
+        this->_render->render();
+        this->_render->reset();
     }
 
     AImage_delete(image);
