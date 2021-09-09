@@ -746,6 +746,7 @@ void AppEngine::draw_frame(void)
         ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
         ncnn::VkR8g8b8a8UnormImageAllocator r8g8b8a8unorm_allocator(this->_vkdev);
         ncnn::VkImageMat in_img_mat(this->_img_res.width, this->_img_res.height, 4, 16u, 4, &ahb_im_allocator);
+//        in_img_mat.from_android_hardware_buffer(&ahb_im_allocator);
 
         ncnn::VkImageMat temp_img_mat(this->_img_res.width, this->_img_res.height, 4, 16u, 4, this->_network->opt.blob_vkallocator);
 
@@ -753,26 +754,21 @@ void AppEngine::draw_frame(void)
 
         ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
         ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
-        LOGW("----------------------create import pipeline");
         import_pipeline.create(&ahb_im_allocator, 4, 1, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
-        LOGW("----------------------create import pipleine done, create convert pipeline");
         convert_pipline.create(4, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
-        LOGW("----------------------create done, begin import");
 
 //        ncnn::Mat c_mat(this->_img_res.width, this->_img_res.height, 4, 16u, 4);
 //        c_mat.fill((float)255.0f);
 //        this->_compute_cmd->record_clone(c_mat, temp_img_mat, this->_network->opt);
 
         this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_img_mat);
-        LOGW("----------------------import done, begin convert");
         this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
         this->_compute_cmd->submit_and_wait();
         this->_compute_cmd->reset();
-        LOGW("----------------------compute done, begin render");
+
         this->_render_cmd->record_image(out_img_mat);
         this->_render_cmd->render();
         this->_render_cmd->reset();
-        LOGW("----------------------render done");
 
 //        AHardwareBuffer_acquire(hb);
 //        void* out_data = nullptr;
