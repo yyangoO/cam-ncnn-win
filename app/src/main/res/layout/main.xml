@@ -4,10 +4,4 @@
     android:layout_height="match_parent"
     android:gravity="bottom"
     android:orientation="vertical" >
-
-    <SurfaceView
-        android:id="@+id/camera_view"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        />
 </RelativeLayout>

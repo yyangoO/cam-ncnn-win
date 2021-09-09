@@ -1,7 +1,18 @@
 #include "main_activity_jni.h"
 
 
-#define MAX_BUF_COUNT 2     ///< max buffers in this ImageReader
+#define LOG_TAG "CAM2NCNN2WIN"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define ASSERT(cond, fmt, ...)                                          \
+    if (!(cond))                                                        \
+    {                                                                   \
+        __android_log_assert(#cond, LOG_TAG, fmt, ##__VA_ARGS__);       \
+    }
+
+
+#define MAX_BUF_COUNT 4     ///< max buffers in this ImageReader
 
 
 static const uint64_t k_min_exposure_time = static_cast<uint64_t>(1000000);
@@ -35,6 +46,7 @@ void NDKCamera::on_dev_state(ACameraDevice* dev)
 {
     std::string id(ACameraDevice_getId(dev));
     LOGI("NDKCamera::on_dev_state -> device %s is disconnected!", id.c_str());
+
     this->_cams[id].available_flag_ = false;
     ACameraDevice_close(this->_cams[id].device_);
     this->_cams.erase(id);
@@ -43,7 +55,8 @@ void NDKCamera::on_dev_state(ACameraDevice* dev)
 void NDKCamera::on_dev_error(ACameraDevice* dev, int err)
 {
     std::string id(ACameraDevice_getId(dev));
-    LOGE("NDKCamera::on_dev_error -> %s = %#x", id.c_str(), err);
+    LOGI("NDKCamera::on_dev_error -> %s = %#x", id.c_str(), err);
+
     CameraId& cam = this->_cams[id];
 
     switch (err)
@@ -60,7 +73,7 @@ void NDKCamera::on_dev_error(ACameraDevice* dev, int err)
             cam.own_flag_ = false;
             break;
         default:
-            LOGE("NDKCamera::on_dev_error -> unknown camera device error!");
+            LOGI("NDKCamera::on_dev_error -> unknown camera device error!");
     }
 }
 
@@ -103,10 +116,12 @@ void on_session_closed(void* ctx, ACameraCaptureSession* ses)
     LOGI("NDKCamera::on_session_closed -> closed!");
     reinterpret_cast<NDKCamera*>(ctx)->on_session_state(ses, CaptureSessionState::CLOSED);
 }
+
 void on_session_ready(void* ctx, ACameraCaptureSession* ses) {
     LOGI("NDKCamera::on_session_ready -> ready!");
     reinterpret_cast<NDKCamera*>(ctx)->on_session_state(ses, CaptureSessionState::READY);
 }
+
 void on_session_active(void* ctx, ACameraCaptureSession* ses)
 {
     LOGI("NDKCamera::on_session_active -> active!");
@@ -124,69 +139,79 @@ ACameraCaptureSession_stateCallbacks* NDKCamera::get_session_listener(void)
     return &sessionListener;
 }
 
-void AppEngine::image_callback(AImageReader *reader)
+void NDKCamera::image_callback(AImageReader *reader)
 {
     media_status_t status = AMEDIA_OK;
+
     int32_t format;
+
     status = AImageReader_getFormat(reader, &format);
     ASSERT(!status, "NDKCamera::image_callback AImageReader_getFormat -> %d", status);
-    if (format != AIMAGE_FORMAT_YUV_420_888)
-    {
-        LOGE("AppEngine::image_callback -> wrong format! ");
-    }
 }
-
 
 void NDKCamera::on_session_state(ACameraCaptureSession *ses, CaptureSessionState state)
 {
     if (!ses || ses != this->_capture_session)
     {
-        LOGE("NDKCamera::on_session_state -> capture session error!");
+        LOGI("NDKCamera::on_session_state -> capture session error!");
         return;
     }
+
     if (state >= CaptureSessionState::MAX_STATE)
     {
-        LOGE("NDKCamera::on_session_state -> MAX_STATE");
+        LOGI("NDKCamera::on_session_state -> capture session error!");
     }
+
     this->_capture_session_state = state;
 }
 
-void on_image_callback(void *ctx, AImageReader *reader);
+void on_image_callback(void *ctx, AImageReader *reader)
+{
+    reinterpret_cast<NDKCamera *>(ctx)->image_callback(reader);
+}
 
 
 /*----------------------------------------------------------------------------------------------------------*/
 /*----------------------------------------------camera manager----------------------------------------------*/
 /*----------------------------------------------------------------------------------------------------------*/
 NDKCamera::NDKCamera()
-    : _cam_mgr(nullptr),
-      _active_cam_id(""),
-      _cam_facing(ACAMERA_LENS_FACING_BACK),
-      _cam_orientation(0),
-      _output_container(nullptr),
-      _capture_session_state(CaptureSessionState::MAX_STATE),
-      _exposure_time(static_cast<int64_t>(0))
+        : _cam_mgr(nullptr),
+          _active_cam_id(""),
+          _cam_facing(ACAMERA_LENS_FACING_BACK),
+          _cam_orientation(0),
+          _output_container(nullptr),
+          _capture_session_state(CaptureSessionState::MAX_STATE),
+          _exposure_time(static_cast<int64_t>(0)),
+          _native_window(nullptr),
+          _hb(nullptr),
+          _callback(nullptr),
+          _callback_ctx(nullptr)
 {
     camera_status_t status = ACAMERA_OK;
 
     this->_valid_flag = false;
+
     this->_requests.resize(CAPTURE_REQUEST_COUNT);
     memset(this->_requests.data(), 0, this->_requests.size() * sizeof(this->_requests[0]));
 
     this->_cams.clear();
     this->_cam_mgr = ACameraManager_create();
-    ASSERT(this->_cam_mgr, "NDKCamera::NDKCamera ACameraManager_create -> failed to create camera manager")
-
-    this->enumerate_cam();
-    if (this->_active_cam_id.size() == 0)
+    if(this->_cam_mgr == nullptr)
     {
-        LOGW("NDKCamera::NDKCamera -> no facing back camera! ");
+        LOGW("NDKCamera::NDKCamera ACameraManager_create -> %d", status);
+        return;
+    }
+
+    enumerate_cam();
+    if (this->_active_cam_id.size() == 0) {
+        LOGW("NDKCamera::NDKCamera -> no facing back camera!");
     }
 
     status = ACameraManager_openCamera(this->_cam_mgr,
                                        this->_active_cam_id.c_str(),
                                        this->get_dev_listener(),
                                        &this->_cams[this->_active_cam_id].device_);
-    ASSERT(!status, "NDKCamera::NDKCamera ACameraManager_openCamera -> %d", status)
+    ASSERT(!status, "NDKCamera::NDKCamera ACameraManager_openCamera -> %d", status);
 
     status = ACameraManager_registerAvailabilityCallback(this->_cam_mgr, this->get_mgr_listener());
     ASSERT(!status, "NDKCamera::NDKCamera ACameraManager_registerAvailabilityCallback -> %d", status);
@@ -204,13 +229,11 @@ NDKCamera::NDKCamera()
         {
             this->_exposure_range.min_ = k_min_exposure_time;
         }
-
         this->_exposure_range.max_ = val.data.i64[1];
         if (this->_exposure_range.max_ > k_max_exposure_time)
         {
             this->_exposure_range.max_ = k_max_exposure_time;
         }
-
         this->_exposure_time = this->_exposure_range.value(50);
     }
     else
@@ -225,7 +248,6 @@ NDKCamera::NDKCamera()
     {
         this->_sensitivity_range.min_ = val.data.i32[0];
         this->_sensitivity_range.max_ = val.data.i32[1];
-
         this->_sensitivity = this->_sensitivity_range.value(50);
     }
     else
@@ -244,7 +266,7 @@ void NDKCamera::enumerate_cam(void)
 
     ACameraIdList* cam_ids = nullptr;
     status = ACameraManager_getCameraIdList(this->_cam_mgr, &cam_ids);
-    ASSERT(!status, "NDKCamera::enumerate_cam ACameraManager_getCameraIdList -> %d", status)
+    ASSERT(!status, "NDKCamera::enumerate_cam ACameraManager_getCameraIdList -> %d", status);
 
     for (int i = 0; i < cam_ids->numCameras; i++)
     {
@@ -252,12 +274,12 @@ void NDKCamera::enumerate_cam(void)
 
         ACameraMetadata* acam_metadata;
         status = ACameraManager_getCameraCharacteristics(this->_cam_mgr, id, &acam_metadata);
-        ASSERT(!status, "NDKCamera::enumerate_cam ACameraManager_getCameraCharacteristics -> %d", status)
+        ASSERT(!status, "NDKCamera::enumerate_cam ACameraManager_getCameraCharacteristics -> %d", status);
 
         int32_t count = 0;
         const uint32_t* tags = nullptr;
         status = ACameraMetadata_getAllTags(acam_metadata, &count, &tags);
-        ASSERT(!status, "NDKCamera::enumerate_cam ACameraMetadata_getAllTags -> %d", status)
+        ASSERT(!status, "NDKCamera::enumerate_cam ACameraMetadata_getAllTags -> %d", status);
 
         for (int tag_i = 0; tag_i < count; tag_i++)
         {
@@ -265,7 +287,6 @@ void NDKCamera::enumerate_cam(void)
             {
                 ACameraMetadata_const_entry lens_info = {0,};
                 status = ACameraMetadata_getConstEntry(acam_metadata, tags[tag_i], &lens_info);
-                ASSERT(!status, "NDKCamera::enumerate_cam ACameraMetadata_getConstEntry -> %d", status)
 
                 CameraId cam(id);
                 cam.facing_ = static_cast<acamera_metadata_enum_android_lens_facing_t>(lens_info.data.u8[0]);
@@ -285,7 +306,7 @@ void NDKCamera::enumerate_cam(void)
 
     if (this->_cams.size() == 0)
     {
-        LOGW("NDKCamera::enumerate_cam -> no camera available! ");
+        LOGW("NDKCamera::enumerate_cam -> no camera available on the device! ");
     }
 
     if (this->_active_cam_id.length() == 0)
@@ -296,11 +317,13 @@ void NDKCamera::enumerate_cam(void)
     ACameraManager_deleteCameraIdList(cam_ids);
 }
 
-bool NDKCamera::get_capture_size(ImageFormat* view)
+bool NDKCamera::get_capture_size(ANativeWindow* display, ImageFormat* view)
 {
     camera_status_t status = ACAMERA_OK;
 
-    DisplayDimension disp(view->width, view->height);
+    DisplayDimension disp(ANativeWindow_getWidth(display), ANativeWindow_getHeight(display));
+    if (this->_cam_orientation == 90 || this->_cam_orientation == 270)
+        disp.flip();
 
     ACameraMetadata* acam_metadata;
     status = ACameraManager_getCameraCharacteristics(this->_cam_mgr, this->_active_cam_id.c_str(), &acam_metadata);
@@ -317,9 +340,7 @@ bool NDKCamera::get_capture_size(ImageFormat* view)
         int32_t input = entry.data.i32[i + 3];
         int32_t format = entry.data.i32[i + 0];
         if (input)
-        {
             continue;
-        }
         if (format == AIMAGE_FORMAT_YUV_420_888)
         {
             DisplayDimension res(entry.data.i32[i + 1], entry.data.i32[i + 2]);
@@ -327,14 +348,17 @@ bool NDKCamera::get_capture_size(ImageFormat* view)
             {
                 continue;
             }
+
             found_it_flag = true;
             found_res = res;
+
             if (disp == res)
             {
                 break;
             }
         }
     }
+
     if (found_it_flag)
     {
         view->width = found_res.org_width();
@@ -342,30 +366,40 @@ bool NDKCamera::get_capture_size(ImageFormat* view)
     }
     else
     {
-        LOGI("NDKCamera::get_capture_size -> no compatible camera resolution, taking default resolution! ");
-        view->width = 640;
-        view->height = 480;
-
+        LOGW("NDKCamera::get_capture_size -> no compatible camera resolution, taking 1920*1080!");
+        if (disp.IsPortrait())
+        {
+            view->width = 1080;
+            view->height = 1920;
+        }
+        else
+        {
+            view->width = 1920;
+            view->height = 1080;
+        }
     }
     view->format = AIMAGE_FORMAT_YUV_420_888;
 
     return found_it_flag;
 }
 
-
-void NDKCamera::create_session(ANativeWindow* native_window)
+void NDKCamera::create_session(void)
 {
     camera_status_t status = ACAMERA_OK;
 
-    this->_requests[PREVIEW_REQUEST_IDX].output_native_window_ = native_window;
+    if (this->_native_window == nullptr)
+    {
+        LOGW("NDKCamera::create_session -> native window is not initialized!");
+    }
+
+    this->_requests[PREVIEW_REQUEST_IDX].output_native_window_ = this->_native_window;
     this->_requests[PREVIEW_REQUEST_IDX].template_ = TEMPLATE_PREVIEW;
 
-    status = ACaptureSessionOutputContainer_create(&this->_output_container);
-    ASSERT(!status, "NDKCamera::create_session ACaptureSessionOutputContainer_create -> %d", status);
-
+    ACaptureSessionOutputContainer_create(&this->_output_container);
     for (auto& req : this->_requests)
     {
         ANativeWindow_acquire(req.output_native_window_);
+
         status = ACaptureSessionOutput_create(req.output_native_window_, &req.session_output_);
         ASSERT(!status, "NDKCamera::create_session ACaptureSessionOutput_create -> %d", status);
 
@@ -390,22 +424,13 @@ void NDKCamera::create_session(ANativeWindow* native_window)
     ASSERT(!status, "NDKCamera::create_session ACameraDevice_createCaptureSession -> %d", status);
 
     uint8_t ae_mode_off = ACAMERA_CONTROL_AE_MODE_OFF;
-    status = ACaptureRequest_setEntry_u8(this->_requests[PREVIEW_REQUEST_IDX].request_,
-                                         ACAMERA_CONTROL_AE_MODE,
-                                         1,
-                                         &ae_mode_off);
+    status = ACaptureRequest_setEntry_u8(this->_requests[PREVIEW_REQUEST_IDX].request_, ACAMERA_CONTROL_AE_MODE, 1, &ae_mode_off);
     ASSERT(!status, "NDKCamera::create_session ACaptureRequest_setEntry_u8 -> %d", status);
 
-    status = ACaptureRequest_setEntry_i32(this->_requests[PREVIEW_REQUEST_IDX].request_,
-                                          ACAMERA_SENSOR_SENSITIVITY,
-                                          1,
-                                          &this->_sensitivity);
+    status = ACaptureRequest_setEntry_i32(this->_requests[PREVIEW_REQUEST_IDX].request_, ACAMERA_SENSOR_SENSITIVITY, 1, &this->_sensitivity);
     ASSERT(!status, "NDKCamera::create_session ACaptureRequest_setEntry_i32 -> %d", status);
 
-    status = ACaptureRequest_setEntry_i64(this->_requests[PREVIEW_REQUEST_IDX].request_,
-                                          ACAMERA_SENSOR_EXPOSURE_TIME,
-                                          1,
-                                          &this->_exposure_time);
+    status = ACaptureRequest_setEntry_i64(this->_requests[PREVIEW_REQUEST_IDX].request_, ACAMERA_SENSOR_EXPOSURE_TIME, 1, &this->_exposure_time);
     ASSERT(!status, "NDKCamera::create_session ACaptureRequest_setEntry_i64 -> %d", status);
 }
 
@@ -421,15 +446,18 @@ bool NDKCamera::get_sensor_orientation(int32_t *facing, int32_t *angle)
     ACameraMetadata* acam_metadata;
     ACameraMetadata_const_entry face;
     ACameraMetadata_const_entry orientation;
+
     status = ACameraManager_getCameraCharacteristics(this->_cam_mgr, this->_active_cam_id.c_str(), &acam_metadata);
     ASSERT(!status, "NDKCamera::get_sensor_orientation ACameraManager_getCameraCharacteristics -> %d", status);
 
     status = ACameraMetadata_getConstEntry(acam_metadata, ACAMERA_LENS_FACING, &face);
     ASSERT(!status, "NDKCamera::get_sensor_orientation ACameraMetadata_getConstEntry -> %d", status);
+
     this->_cam_facing = static_cast<int32_t>(face.data.u8[0]);
 
     status = ACameraMetadata_getConstEntry(acam_metadata, ACAMERA_SENSOR_ORIENTATION, &orientation);
     ASSERT(!status, "NDKCamera::get_sensor_orientation ACameraMetadata_getConstEntry -> %d", status);
+
     this->_cam_orientation = orientation.data.i32[0];
 
     ACameraMetadata_free(acam_metadata);
@@ -438,6 +466,7 @@ bool NDKCamera::get_sensor_orientation(int32_t *facing, int32_t *angle)
     {
         *facing = this->_cam_facing;
     }
+
     if (angle)
     {
         *angle = this->_cam_orientation;
@@ -446,28 +475,55 @@ bool NDKCamera::get_sensor_orientation(int32_t *facing, int32_t *angle)
     return true;
 }
 
-void NDKCamera::request(bool flag)
+void NDKCamera::start_request(bool start)
 {
-    camera_status_t status = ACAMERA_OK;
-    if (flag)
+    if (start)
     {
-        status = ACameraCaptureSession_setRepeatingRequest(this->_capture_session,
-                                                           nullptr,
-                                                           1,
-                                                           &this->_requests[PREVIEW_REQUEST_IDX].request_,
-                                                           nullptr);
-        ASSERT(!status, "NDKCamera::request ACameraCaptureSession_setRepeatingRequest -> %d", status);
+        ACameraCaptureSession_setRepeatingRequest(this->_capture_session,
+                                                  nullptr,
+                                                  1,
+                                                  &this->_requests[PREVIEW_REQUEST_IDX].request_,
+                                                  nullptr);
+    }
+    else if (!start && this->_capture_session_state == CaptureSessionState::ACTIVE)
+    {
+        ACameraCaptureSession_stopRepeating(this->_capture_session);
+    }
+    else {
+        LOGW("NDKCamera::start_request -> conflict states! ");
+    }
+}
 
-    }
-    else if (!flag && this->_capture_session_state == CaptureSessionState::ACTIVE)
+void NDKCamera::init_img(ImageFormat res)
+{
+    media_status_t status = AMEDIA_OK;
+
+    status = AImageReader_new(res.width, res.height, AIMAGE_FORMAT_YUV_420_888, MAX_BUF_COUNT, &this->_reader);
+    ASSERT(!status, "NDKCamera::init_img AImageReader_new -> %d", status);
+
+    AImageReader_ImageListener listener{.context = this, .onImageAvailable = on_image_callback,};
+    AImageReader_setImageListener(this->_reader, &listener);
+
+    ANativeWindow* native_window;
+
+    status = AImageReader_getWindow(this->_reader, &native_window);
+    ASSERT(!status, "NDKCamera::init_img AImageReader_getWindow -> %d", status);
+
+    this->_native_window = native_window;
+}
+
+AImage* NDKCamera::get_next_img()
+{
+    media_status_t status = AMEDIA_OK;
+
+    AImage *image;
+    status = AImageReader_acquireNextImage(this->_reader, &image);
+    if (status != AMEDIA_OK)
     {
-        status = ACameraCaptureSession_stopRepeating(this->_capture_session);
-        ASSERT(!status, "NDKCamera::request ACameraCaptureSession_stopRepeating -> %d", status);
+        return nullptr;
     }
-    else
-    {
-        LOGE("NDKCamera::request -> conflict states! ");
-    }
+
+    return image;
 }
 
 NDKCamera::~NDKCamera()
@@ -480,6 +536,7 @@ NDKCamera::~NDKCamera()
     {
         status = ACameraCaptureSession_stopRepeating(this->_capture_session);
         ASSERT(!status, "NDKCamera::~NDKCamera ACameraCaptureSession_stopRepeating -> %d", status);
+
     }
     ACameraCaptureSession_close(this->_capture_session);
 
@@ -496,6 +553,8 @@ NDKCamera::~NDKCamera()
 
         ACaptureSessionOutput_free(req.session_output_);
         ANativeWindow_release(req.output_native_window_);
+
+        AImageReader_delete(this->_reader);
     }
 
     this->_requests.resize(0);
@@ -511,6 +570,7 @@ NDKCamera::~NDKCamera()
     }
 
     this->_cams.clear();
+
     if (this->_cam_mgr)
     {
         status = ACameraManager_unregisterAvailabilityCallback(this->_cam_mgr, this->get_mgr_listener());
@@ -525,33 +585,32 @@ NDKCamera::~NDKCamera()
 /*----------------------------------------------------------------------------------------------------------*/
 /*------------------------------------------------App engine------------------------------------------------*/
 /*----------------------------------------------------------------------------------------------------------*/
-AppEngine::AppEngine(void)
-    : _surface_res({}),
-      _camera_res({}),
-      _camera(nullptr),
-      _buffer(nullptr),
-      _camera_ready_flag(false),
-      _network(nullptr),
-      _vkdev(nullptr),
-      _compute(nullptr),
-      _render(nullptr),
-      _reader(nullptr),
-      _camera_nwin(nullptr),
-      _surface_nwin(nullptr),
-      _callback(nullptr),
-      _callback_ctx(nullptr)
+AppEngine::AppEngine(android_app* app)
+        : _app(app),
+          _cam_granted_flag(false),
+          _rotation(0),
+          _cam(nullptr),
+          _cam_ready_flag(false),
+          _network(nullptr),
+          _vkdev(nullptr),
+          _compute_cmd(nullptr),
+          _render_cmd(nullptr)
 {
-    this->_surface_res.format = AIMAGE_FORMAT_RGBA_8888;
-    this->_camera_res.format = AIMAGE_FORMAT_YUV_420_888;
+    memset(&this->_native_win_res, 0, sizeof(this->_native_win_res));
+
+    this->_img_res.width = 1080;
+    this->_img_res.height = 1920;
+    this->_img_res.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
 
     ncnn::create_gpu_instance();
     _network = new ncnn::Net();
     this->_vkdev = ncnn::get_gpu_device();
-    this->_compute = new ncnn::VkCompute(this->_vkdev);
-    this->_render = new ncnn::VkRender(this->_vkdev);
+    this->_compute_cmd = new ncnn::VkCompute(this->_vkdev);
+    this->_render_cmd = new ncnn::VkRender(this->_vkdev);
     ncnn::VkAllocator* blob_vkallocator = this->_vkdev->acquire_blob_allocator();
     ncnn::VkAllocator* staging_vkallocator = this->_vkdev->acquire_staging_allocator();
     ncnn::Option opt;
+    opt.num_threads = 4;
     opt.blob_vkallocator = blob_vkallocator;
     opt.workspace_vkallocator = blob_vkallocator;
     opt.staging_vkallocator = staging_vkallocator;
@@ -559,117 +618,123 @@ AppEngine::AppEngine(void)
     this->_network->opt = opt;
 }
 
+struct android_app* AppEngine::interface_2_android_app(void) const
+{
+    return this->_app;
+}
+
+void AppEngine::request_cam_permission(void)
+{
+    if (!this->_app)
+    {
+        return;
+    }
+
+    JNIEnv* env;
+
+    ANativeActivity* activity = this->_app->activity;
+    activity->vm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    activity->vm->AttachCurrentThread(&env, NULL);
+    jobject activity_obj = env->NewGlobalRef(activity->clazz);
+    jclass clz = env->GetObjectClass(activity_obj);
+    env->CallVoidMethod(activity_obj, env->GetMethodID(clz, "RequestCamera", "()V"));
+    env->DeleteGlobalRef(activity_obj);
+    activity->vm->DetachCurrentThread();
+
+    this->_cam_granted_flag = true;
+}
+
 void AppEngine::create_camera(void)
 {
-    this->_camera_res.width = 1920;
-    this->_camera_res.height = 1080;
+    if (!this->_cam_granted_flag)
+        this->request_cam_permission();
 
-    this->_camera = new NDKCamera();
+    if (!this->_app->window)
+    {
+        LOGW("AppEngine::create_cam -> app's window is not initialized!");
+        return;
+    }
+
+    int32_t display_rotation = this->get_display_rotation();
+    this->_rotation = display_rotation;
+
+    this->_cam = new NDKCamera();
 
     int32_t facing = 0;
     int32_t angle = 0;
+    int32_t img_rotation = 0;
 
-    this->_camera->get_sensor_orientation(&facing, &angle);
-    if (facing == ACAMERA_LENS_FACING_BACK)
+    if (this->_cam->get_sensor_orientation(&facing, &angle))
     {
-        LOGI("AppEngine::create_camera -> camera faces back! ");
+        if (facing == ACAMERA_LENS_FACING_FRONT)
+        {
+            img_rotation = (angle + this->_rotation) % 360;
+            img_rotation = (360 - img_rotation) % 360;
+        }
+        else
+        {
+            img_rotation = (angle - this->_rotation + 360) % 360;
+        }
     }
-    else
-    {
-        LOGI("AppEngine::create_camera -> camera faces not back! ");
-    }
 
-    LOGI("AppEngine::create_camera -> camera angle is %d", angle);
+    ImageFormat view{0, 0, 0};
+    this->_cam->get_capture_size(this->_app->window, &view);
 
-    this->_camera->get_capture_size(&this->_camera_res);
-    LOGI("AppEngine::create_camera -> camera width is %d", this->_camera_res.width);
-    LOGI("AppEngine::create_camera -> camera height is %d", this->_camera_res.height);
+    bool portrait_nativewindow_flag = (this->_native_win_res.width < this->_native_win_res.height);
 
-    media_status_t status = AMEDIA_OK;
-    status = AImageReader_new(this->_camera_res.width, this->_camera_res.height, this->_camera_res.format, MAX_BUF_COUNT, &this->_reader);
-    ASSERT(!status, "AppEngine::AppEngine AImageReader_new -> %d", status);
-    AImageReader_ImageListener listener{.context = this, .onImageAvailable = on_image_callback,};
-    status = AImageReader_setImageListener(this->_reader, &listener);
-    ASSERT(!status, "AppEngine::AppEngine AImageReader_setImageListener -> %d", status);
-    status = AImageReader_getWindow(this->_reader, &this->_camera_nwin);
-    ASSERT(!status, "NDKCamera::create_imagereader AImageReader_getWindow -> %d", status);
-    ANativeWindow_acquire(this->_camera_nwin);
+    ANativeWindow_setBuffersGeometry(this->_app->window,
+                                     portrait_nativewindow_flag ? view.height : view.width,
+                                     portrait_nativewindow_flag ? view.width : view.height,
+                                     WINDOW_FORMAT_RGBA_8888);
 
-    this->_camera->create_session(this->_camera_nwin);
-    this->_camera->request(true);
-
+    this->_cam->init_img(view);
+    this->_cam->create_session();
 }
 
 void AppEngine::delete_camera(void)
 {
-    this->_camera_ready_flag = false;
-    if (this->_camera)
+    this->_cam_ready_flag = false;
+    if (this->_cam)
     {
-        this->_camera->request(false);
-        delete this->_camera;
-        this->_camera = nullptr;
-    }
-
-    if (this->_reader)
-    {
-        AImageReader_delete(this->_reader);
-        this->_reader = nullptr;
-    }
-    if (this->_camera_nwin)
-    {
-        ANativeWindow_release(this->_camera_nwin);
-        this->_camera_nwin = nullptr;
+        delete this->_cam;
+        this->_cam = nullptr;
     }
 }
 
-void AppEngine::set_disp_window(ANativeWindow* native_window)
-{
-    if (this->_surface_nwin)
-    {
-        ANativeWindow_release(this->_surface_nwin);
-        this->_surface_nwin = nullptr;
+void AppEngine::draw_frame(void) {
+    if (!this->_app->window) {
+        return;
     }
-    this->_surface_nwin = native_window;
-    ANativeWindow_acquire(this->_surface_nwin);
 
-    this->_surface_res.width = ANativeWindow_getWidth(native_window);
-    this->_surface_res.height = ANativeWindow_getHeight(native_window);
-    ANativeWindow_setBuffersGeometry(this->_surface_nwin, this->_surface_res.width, this->_surface_res.height, WINDOW_FORMAT_RGBA_8888);
+    if (!this->_cam_ready_flag)
+    {
+        return;
+    }
 
-    this->_render->create(this->_surface_nwin);
-}
-static int i = 0;
-void AppEngine::draw_surface(void)
-{
     int32_t ret = -1;
     media_status_t status = AMEDIA_OK;
 
     AImage* image = nullptr;
     ImageFormat res;
+    image = this->_cam->get_next_img();
 
-    status = AImageReader_acquireNextImage(this->_reader, &image);
-    ASSERT(!status, "AppEngine::draw_surface AImageReader_acquireLatestImage -> %d", status);
+    if (image == nullptr)
+    {
+        return;
+    }
 
     status = AImage_getWidth(image, &res.width);
-    ASSERT(!status, "AppEngine::draw_surface AImage_getWidth -> %d", status);
+    ASSERT(!status, "AppEngine::show_camera AImage_getWidth -> %d", status);
 
     status = AImage_getHeight(image, &res.height);
-    ASSERT(!status, "AppEngine::draw_surface AImage_getHeight -> %d", status);
+    ASSERT(!status, "AppEngine::show_camera AImage_getHeight -> %d", status);
 
     status = AImage_getFormat(image, &res.format);
-    ASSERT(!status, "AppEngine::draw_surface AImage_getFormat -> %d", status);
+    ASSERT(!status, "AppEngine::show_camera AImage_getFormat -> %d", status);
 
-    if(this->_surface_nwin)
+    if(this->_app->window)
     {
-        LOGI("camera/surface -> width: %d/%d | height: %d/%d | format: %d/%d",
-             res.width,
-             this->_surface_res.width,
-             res.height,
-             this->_surface_res.height,
-             res.format,
-             this->_surface_res.format);
-
-        AHardwareBuffer* hb = nullptr;
+        AHardwareBuffer *hb = nullptr;
         AHardwareBuffer_Desc hb_desc;
 
         hb_desc.width = res.width;
@@ -681,32 +746,11 @@ void AppEngine::draw_surface(void)
         hb_desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
         ret = AHardwareBuffer_allocate(&hb_desc, &hb);
         if (ret < 0)
-            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_allocate -> %d", ret);
-
-
+        {
+            LOGW("AppEngine::init_background AHardwareBuffer_allocate -> %d", ret);
+        }
 
         status = AImage_getHardwareBuffer(image, &hb);
-        ASSERT(!status, "AppEngine::draw_surface AImage_getHardwareBuffer -> %d", status);
-
-
-
-
-//        void* img = malloc(1920 * 1080 * 4);
-//        uint32_t* bk_data = static_cast<uint32_t*>(img);
-//        for (int i = 0; i < 1920 * 1080; i++)
-//            bk_data[i] = 0x0000ff00;
-//
-//        void* data;
-//
-//        ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN, -1, NULL, &data);
-//        if (ret < 0)
-//            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_lock -> %d", ret);
-//
-//        memcpy(data, img, (1920 * 1080 * 4));
-//
-//        ret = AHardwareBuffer_unlock(hb, NULL);
-//        if (ret < 0)
-//            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_unlock -> %d", ret);
 
 
 
@@ -721,78 +765,151 @@ void AppEngine::draw_surface(void)
 
         ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
         ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
-        LOGI("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%d", this->_vkdev->info.support_VK_EXT_queue_family_foreign());
-        import_pipeline.create(&ahb_im_allocator, 4, 1, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
-        LOGI("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        convert_pipline.create(4, 1, this->_camera_res.width, this->_camera_res.height, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
-        LOGI("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC%d", i);
+        LOGW("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%d", this->_vkdev->info.support_VK_EXT_queue_family_foreign());
+        import_pipeline.create(&ahb_im_allocator, 1, 1, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
+        LOGW("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+        convert_pipline.create(1, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
+        LOGW("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 
-        ncnn::Mat c_mat(1920, 1080, 4, 16U, 4);
-//        float* color = (float*)c_mat.data;
-            c_mat.fill((float)i);
-            if (i == 10)
-                i = 0;
-            else
-                i++;
+//        ncnn::Mat c_mat(1920, 1080, 4, 16U, 4);
+//        c_mat.fill((float)255.0f);
+//        this->_compute_cmd->record_clone(c_mat, temp_img_mat, this->_network->opt);
 
 
+        this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_mat);
+        this->_compute_cmd->record_clone(temp_mat, temp_img_mat, this->_network->opt);
+        LOGW("DDDDDDDDDDDDDDDDDDDDDDDDDDDD");
+        this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
+        this->_compute_cmd->submit_and_wait();
+        this->_compute_cmd->reset();
 
-//        int _color = 0;
-//        unsigned char* color = (unsigned char*)&_color;
-//        color[0] = 100;
-//        color[1] = 20;
-//        color[2] = 200;
-//        color[3] = 100;
-//        ncnn::draw_rectangle_c4(c_mat, 1920, 1080, 500, 500, 1000, 1000, _color, 3);
+        LOGW("EEEEEEEEEEEEEEEEEEEEEEEEEEEE");
+        this->_render_cmd->record_image(out_img_mat);
+        this->_render_cmd->render();
+        this->_render_cmd->reset();
+        LOGW("FFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
 
-
-
-        this->_compute->record_clone(c_mat, temp_img_mat, this->_network->opt);
-
-//        this->_compute->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_mat);
-//        this->_compute->record_clone(temp_mat, temp_img_mat, this->_network->opt);
-        LOGI("DDDDDDDDDDDDDDDDDDDDDDDDDDDD");
-        this->_compute->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
-        this->_compute->submit_and_wait();
-        this->_compute->reset();
-
-        LOGI("EEEEEEEEEEEEEEEEEEEEEEEEEEEE");
-        this->_render->record_image(out_img_mat);
-        this->_render->render();
-        this->_render->reset();
-        LOGI("FFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
-
-
-//        LOGI("TTTTTTTTTTTTTTTTTTT %d", temp_img_mat.data->width);
-//        LOGI("TTTTTTTTTTTTTTTTTTT %d", temp_img_mat.data->height);
-//        LOGI("TTTTTTTTTTTTTTTTTTT %d", temp_img_mat.data->depth);
-//        LOGI("TTTTTTTTTTTTTTTTTTT %d", temp_img_mat.data->format);
 
         void* out_data = nullptr;
 
         ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, NULL, &out_data);
 
         uint32_t* show_data = static_cast<uint32_t*>(out_data);
-//        uint32_t* show_data = static_cast<uint32_t*>(c_mat.data);
-//        LOGI("TTTTTTTTTTTTTTTTTTT");
-//        for(int i = 0; i < c_mat.total(); i++)
-//        {
-//            LOGI("%d", show_data[i]);
-//        }
-//        LOGI("TTTTTTTTTTTTTTTTTTT");
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX1   %d", show_data[0]);
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX2   %d", show_data[100]);
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX3   %d", show_data[2000]);
-        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX4   %d", show_data[10000]);
+    //        uint32_t* show_data = static_cast<uint32_t*>(c_mat.data);
+    //        LOGI("TTTTTTTTTTTTTTTTTTT");
+    //        for(int i = 0; i < c_mat.total(); i++)
+    //        {
+    //            LOGI("%d", show_data[i]);
+    //        }
+    //        LOGI("TTTTTTTTTTTTTTTTTTT");
+        LOGW("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX1   %d", show_data[0]);
+        LOGW("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX2   %d", show_data[100]);
+        LOGW("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX3   %d", show_data[2000]);
+        LOGW("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX4   %d", show_data[10000]);
 
         ret = AHardwareBuffer_unlock(hb, NULL);
     }
     AImage_delete(image);
 }
 
+int AppEngine::get_display_rotation(void)
+{
+    JNIEnv *env;
+    ANativeActivity *activity = this->_app->activity;
+    activity->vm->GetEnv((void **)&env, JNI_VERSION_1_6);
+    activity->vm->AttachCurrentThread(&env, NULL);
+
+    jobject activity_obj = env->NewGlobalRef(activity->clazz);
+    jclass clz = env->GetObjectClass(activity_obj);
+
+    jint new_orientation = env->CallIntMethod(activity_obj, env->GetMethodID(clz, "getRotationDegree", "()I"));
+    env->DeleteGlobalRef(activity_obj);
+
+    activity->vm->DetachCurrentThread();
+
+    return new_orientation;
+}
+
+int32_t AppEngine::get_native_win_width(void)
+{
+    return this->_native_win_res.width;
+}
+
+int32_t AppEngine::get_native_win_height(void)
+{
+    return this->_native_win_res.height;
+}
+
+int32_t AppEngine::get_native_win_format(void)
+{
+    return this->_native_win_res.format;
+}
+
+void AppEngine::set_native_win_res(int32_t w, int32_t h, int32_t format)
+{
+    this->_native_win_res.width = w;
+    this->_native_win_res.height = h;
+    this->_native_win_res.format = format;
+}
+
+void AppEngine::on_app_init_window(void)
+{
+    this->create_camera();
+
+    if (!this->_cam_granted_flag)
+    {
+        return;
+    }
+    this->_cam->start_request(true);
+    this->_cam_ready_flag = true;
+
+    this->enable_ui();
+
+    this->_render_cmd->create(this->_app->window);
+}
+
+void AppEngine::on_app_term_window(void)
+{
+    this->delete_camera();
+}
+
+void AppEngine::on_app_config_change(void)
+{
+    int new_rotation = this->get_display_rotation();
+
+    if (new_rotation != this->_rotation)
+    {
+        this->on_app_term_window();
+        this->_rotation = new_rotation;
+        this->on_app_init_window();
+    }
+}
+
+void AppEngine::on_cam_permission(jboolean granted)
+{
+    this->_cam_granted_flag = (granted != JNI_FALSE);
+
+    if (this->_cam_granted_flag)
+    {
+        this->on_app_init_window();
+    }
+}
+
+void AppEngine::enable_ui(void)
+{
+    JNIEnv *jni;
+
+    this->_app->activity->vm->AttachCurrentThread(&jni, NULL);
+    jclass clazz = jni->GetObjectClass(this->_app->activity->clazz);
+    jmethodID methodID = jni->GetMethodID(clazz, "EnableUI", "()V");
+    jni->CallVoidMethod(this->_app->activity->clazz, methodID);
+    this->_app->activity->vm->DetachCurrentThread();
+}
+
 AppEngine::~AppEngine(void)
 {
     this->delete_camera();
+
     ncnn::destroy_gpu_instance();
 }
 
@@ -800,48 +917,79 @@ AppEngine::~AppEngine(void)
 /*----------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------native activity----------------------------------------------*/
 /*----------------------------------------------------------------------------------------------------------*/
-static AppEngine* p_engine = nullptr;
-static ncnn::Mutex lock;
+static AppEngine* p_engine_obj = nullptr;
 
-void on_image_callback(void *ctx, AImageReader *reader)
+AppEngine* get_app_engine(void)
 {
-    ncnn::MutexLockGuard g(lock);
+    return p_engine_obj;
+}
 
-    reinterpret_cast<AppEngine *>(ctx)->image_callback(reader);
-    p_engine->draw_surface();
+static void ProcessAndroidCmd(struct android_app* app, int32_t cmd)
+{
+    AppEngine* engine = reinterpret_cast<AppEngine*>(app->userData);
+    switch (cmd)
+    {
+        case APP_CMD_INIT_WINDOW:
+            if (engine->interface_2_android_app()->window != NULL)
+            {
+                engine->set_native_win_res(ANativeWindow_getWidth(app->window),
+                                           ANativeWindow_getHeight(app->window),
+                                           ANativeWindow_getFormat(app->window));
+                engine->on_app_init_window();
+            }
+            break;
+        case APP_CMD_TERM_WINDOW:
+            engine->on_app_term_window();
+            ANativeWindow_setBuffersGeometry(app->window,
+                                             engine->get_native_win_width(),
+                                             engine->get_native_win_height(),
+                                             engine->get_native_win_format());
+            break;
+        case APP_CMD_CONFIG_CHANGED:
+            engine->on_app_config_change();
+            break;
+        case APP_CMD_LOST_FOCUS:
+            break;
+    }
 }
 
 extern "C"
 {
-    JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved)
-    {
-        LOGI("JNI onload");
-        p_engine = new AppEngine();
-        return JNI_VERSION_1_4;
-    }
+void android_main(struct android_app* app)
+{
+    AppEngine engine(app);
 
-    JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved)
-    {
-        LOGI("JNI onunload");
-        delete p_engine;
-        p_engine = nullptr;
-    }
+    p_engine_obj = &engine;
 
-    JNIEXPORT void JNICALL Java_com_yyang_camncnnwin_MainActivity_openCamera(JNIEnv* env, jobject thiz)
-    {
-        p_engine->create_camera();
-    }
+    app->userData = reinterpret_cast<void*>(&engine);
+    app->onAppCmd = ProcessAndroidCmd;
 
-    JNIEXPORT void JNICALL Java_com_yyang_camncnnwin_MainActivity_closeCamera(JNIEnv* env, jobject thiz)
+    while (1)
     {
-        p_engine->delete_camera();
-    }
+        int events;
+        struct android_poll_source* source;
 
-    JNIEXPORT void JNICALL Java_com_yyang_camncnnwin_MainActivity_setOutputWindow(JNIEnv *env, jobject thiz, jobject surface)
-    {
-        ANativeWindow* native_window = ANativeWindow_fromSurface(env, surface);
-        p_engine->set_disp_window(native_window);
+        while (ALooper_pollAll(0, NULL, &events, (void**)&source) >= 0)
+        {
+            if (source != NULL)
+            {
+                source->process(app, source);
+            }
+
+            if (app->destroyRequested != 0)
+            {
+                engine.delete_camera();
+                p_engine_obj = nullptr;
+                return;
+            }
+        }
+        p_engine_obj->draw_frame();
     }
 }
 
-
+JNIEXPORT void JNICALL Java_com_yyang_camncnnwin_MainActivity_NotifyCameraPermission(JNIEnv *env, jclass type, jboolean permission)
+{
+    std::thread permission_handler(&AppEngine::on_cam_permission, get_app_engine(), permission);
+    permission_handler.detach();
+}
+}
