@@ -109,7 +109,6 @@ public:
         this->min_ = static_cast<T>(0);
         this->max_ = static_cast<T>(0);
     }
-
     /**
      * @brief know if it's support or not
      * know if it's support or not
@@ -174,8 +173,8 @@ public:
      */
     DisplayDimension(int32_t w, int32_t h) : _w(w), _h(h), _portrait_flag(false)
     {
-        if (h > w) {
-            // make it landscape
+        if (h > w)
+        {
             this->_w = h;
             this->_h = w;
             this->_portrait_flag = true;
