@@ -638,7 +638,7 @@ void AppEngine::set_disp_window(ANativeWindow* native_window)
 
     this->_render->create(this->_surface_nwin);
 }
-
+static int i = 0;
 void AppEngine::draw_surface(void)
 {
     int32_t ret = -1;
@@ -674,47 +674,119 @@ void AppEngine::draw_surface(void)
 
         hb_desc.width = res.width;
         hb_desc.height = res.height;
-        hb_desc.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+        hb_desc.format = AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420;
         hb_desc.rfu0 = 0;
         hb_desc.rfu1 = 0;
         hb_desc.layers = 1;
-        hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN | AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+        hb_desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
         ret = AHardwareBuffer_allocate(&hb_desc, &hb);
         if (ret < 0)
             __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_allocate -> %d", ret);
 
+
+
         status = AImage_getHardwareBuffer(image, &hb);
         ASSERT(!status, "AppEngine::draw_surface AImage_getHardwareBuffer -> %d", status);
 
+
+
+
+//        void* img = malloc(1920 * 1080 * 4);
+//        uint32_t* bk_data = static_cast<uint32_t*>(img);
+//        for (int i = 0; i < 1920 * 1080; i++)
+//            bk_data[i] = 0x0000ff00;
+//
+//        void* data;
+//
+//        ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN, -1, NULL, &data);
+//        if (ret < 0)
+//            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_lock -> %d", ret);
+//
+//        memcpy(data, img, (1920 * 1080 * 4));
+//
+//        ret = AHardwareBuffer_unlock(hb, NULL);
+//        if (ret < 0)
+//            __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "AppEngine::init_background AHardwareBuffer_unlock -> %d", ret);
+
+
+
         ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
         ncnn::VkR8g8b8a8UnormImageAllocator r8g8b8a8unorm_allocator(this->_vkdev);
+        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 16u, 4, &ahb_im_allocator);
 
-        ncnn::VkAllocator* vkallocator = this->_vkdev->acquire_blob_allocator();
+        ncnn::VkMat temp_mat(1920, 1080, 4, 16U, 4, this->_network->opt.blob_vkallocator);
+        ncnn::VkImageMat temp_img_mat;//(1920, 1080, 3, 16, 4, this->_network->opt.blob_vkallocator);
 
-        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 16, 4, &ahb_im_allocator);
-
-        ncnn::VkMat temp_mat(1920, 1080, 4, 16, 4, vkallocator);
-        ncnn::VkImageMat temp_img_mat;//(1920, 1080, 4, 16, 4, vkallocator);
-
-        ncnn::VkImageMat out_img_mat(1080, 1875, 4, 4, 1, &r8g8b8a8unorm_allocator);
+        ncnn::VkImageMat out_img_mat(1080, 1875, 4, 4U, 4, &r8g8b8a8unorm_allocator);
 
         ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
         ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
-        import_pipeline.create(&ahb_im_allocator, 1, 5, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
-        convert_pipline.create(1, 1, this->_camera_res.width, this->_camera_res.height, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
+        LOGI("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%d", this->_vkdev->info.support_VK_EXT_queue_family_foreign());
+        import_pipeline.create(&ahb_im_allocator, 4, 1, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
+        LOGI("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+        convert_pipline.create(4, 1, this->_camera_res.width, this->_camera_res.height, this->_surface_res.width, this->_surface_res.height, this->_network->opt);
+        LOGI("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC%d", i);
 
-        this->_compute->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_mat);
-        this->_compute->record_clone(temp_mat, temp_img_mat, this->_network->opt);
+        ncnn::Mat c_mat(1920, 1080, 4, 16U, 4);
+//        float* color = (float*)c_mat.data;
+            c_mat.fill((float)i);
+            if (i == 10)
+                i = 0;
+            else
+                i++;
+
+
+
+//        int _color = 0;
+//        unsigned char* color = (unsigned char*)&_color;
+//        color[0] = 100;
+//        color[1] = 20;
+//        color[2] = 200;
+//        color[3] = 100;
+//        ncnn::draw_rectangle_c4(c_mat, 1920, 1080, 500, 500, 1000, 1000, _color, 3);
+
+
+
+        this->_compute->record_clone(c_mat, temp_img_mat, this->_network->opt);
+
+//        this->_compute->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_mat);
+//        this->_compute->record_clone(temp_mat, temp_img_mat, this->_network->opt);
+        LOGI("DDDDDDDDDDDDDDDDDDDDDDDDDDDD");
         this->_compute->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
         this->_compute->submit_and_wait();
         this->_compute->reset();
 
-
+        LOGI("EEEEEEEEEEEEEEEEEEEEEEEEEEEE");
         this->_render->record_image(out_img_mat);
         this->_render->render();
         this->_render->reset();
-    }
+        LOGI("FFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
 
+
+//        LOGI("TTTTTTTTTTTTTTTTTTT %d", temp_img_mat.data->width);
+//        LOGI("TTTTTTTTTTTTTTTTTTT %d", temp_img_mat.data->height);
+//        LOGI("TTTTTTTTTTTTTTTTTTT %d", temp_img_mat.data->depth);
+//        LOGI("TTTTTTTTTTTTTTTTTTT %d", temp_img_mat.data->format);
+
+        void* out_data = nullptr;
+
+        ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, NULL, &out_data);
+
+        uint32_t* show_data = static_cast<uint32_t*>(out_data);
+//        uint32_t* show_data = static_cast<uint32_t*>(c_mat.data);
+//        LOGI("TTTTTTTTTTTTTTTTTTT");
+//        for(int i = 0; i < c_mat.total(); i++)
+//        {
+//            LOGI("%d", show_data[i]);
+//        }
+//        LOGI("TTTTTTTTTTTTTTTTTTT");
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX1   %d", show_data[0]);
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX2   %d", show_data[100]);
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX3   %d", show_data[2000]);
+        __android_log_print(ANDROID_LOG_DEBUG, "CAM2NCNN2WIN", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX4   %d", show_data[10000]);
+
+        ret = AHardwareBuffer_unlock(hb, NULL);
+    }
     AImage_delete(image);
 }
 
