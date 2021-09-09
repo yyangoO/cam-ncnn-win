@@ -740,44 +740,28 @@ void AppEngine::draw_frame(void)
         AHardwareBuffer_Desc hb_desc;
 
 
-
         status = AImage_getHardwareBuffer(image, &hb);
         ASSERT(!status, "AppEngine::draw_frame AImage_getHardwareBuffer -> %d", status);
 
 
-//        hb_desc.width = res.width;
-//        hb_desc.height = res.height;
-//        hb_desc.format = AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420;
-//        hb_desc.rfu0 = 0;
-//        hb_desc.rfu1 = 0;
-//        hb_desc.layers = 1;
-//        hb_desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
-//        ret = AHardwareBuffer_allocate(&hb_desc, &hb);
-//        if (ret < 0)
-//        {
-//            LOGW("AppEngine::init_background AHardwareBuffer_allocate -> %d", ret);
-//        }
-
-
-
         ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
         ncnn::VkR8g8b8a8UnormImageAllocator r8g8b8a8unorm_allocator(this->_vkdev);
-        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 16u, 4, &ahb_im_allocator);
+        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 4u, 1, &ahb_im_allocator);
 
-        ncnn::VkMat temp_mat(1920, 1080, 4, 16U, 4, this->_network->opt.blob_vkallocator);
+        ncnn::VkMat temp_mat(1920, 1080, 4, 4u, 1, this->_network->opt.blob_vkallocator);
         ncnn::VkImageMat temp_img_mat;//(1920, 1080, 4, 16U, 4, this->_network->opt.blob_vkallocator);
 
         ncnn::VkImageMat out_img_mat(1080, 1875, 4, 4U, 4, &r8g8b8a8unorm_allocator);
 
         ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
         ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
-        LOGW("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%d", this->_vkdev->info.support_VK_EXT_queue_family_foreign());
-        import_pipeline.create(&ahb_im_allocator, 1, 4, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
-        LOGW("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-        convert_pipline.create(4, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
-        LOGW("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+        LOGW("create import pipeline %d", this->_vkdev->info.support_VK_EXT_queue_family_foreign());
+        import_pipeline.create(&ahb_im_allocator, 1, 1, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
+        LOGW("create import pipleine done, create convert pipeline");
+        convert_pipline.create(1, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
+        LOGW("create done, begin import");
 
-        ncnn::Mat c_mat;
+//        ncnn::Mat c_mat;
 //        ncnn::Mat c_mat(1920, 1080, 4, 16U, 4);
 //        if (!this->_vkdev->info.support_VK_EXT_queue_family_foreign())
 //            c_mat.fill((float)255.0f);
@@ -785,39 +769,30 @@ void AppEngine::draw_frame(void)
 //            c_mat.fill((float)0.0f);
 //        this->_compute_cmd->record_clone(c_mat, temp_img_mat, this->_network->opt);
 
-
         this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_mat);
-        this->_compute_cmd->record_clone(temp_mat, c_mat, this->_network->opt);
-        LOGW("DDDDDDDDDDDDDDDDDDDDDDDDDDDD");
-//        this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
+        this->_compute_cmd->record_clone(temp_mat, temp_img_mat, this->_network->opt);
+        LOGW("import done, begin convert");
+        this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
         this->_compute_cmd->submit_and_wait();
         this->_compute_cmd->reset();
 
-//        LOGW("EEEEEEEEEEEEEEEEEEEEEEEEEEEE");
-//        this->_render_cmd->record_image(out_img_mat);
-//        this->_render_cmd->render();
-//        this->_render_cmd->reset();
-//        LOGW("FFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+        LOGW("compute done, begin render");
+        this->_render_cmd->record_image(out_img_mat);
+        this->_render_cmd->render();
+        this->_render_cmd->reset();
+        LOGW("render done");
 
 
+        AHardwareBuffer_acquire(hb);
         void* out_data = nullptr;
-
         ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, NULL, &out_data);
-
-//        uint32_t* show_data = static_cast<uint32_t*>(out_data);
-            uint32_t* show_data = static_cast<uint32_t*>(c_mat.data);
-//            LOGI("TTTTTTTTTTTTTTTTTTT");
-//            for(int i = 0; i < c_mat.total(); i++)
-//            {
-//                LOGI("%d", show_data[i]);
-//            }
-//            LOGI("TTTTTTTTTTTTTTTTTTT");
-        LOGW("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX1   %d", show_data[0]);
-        LOGW("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX2   %d", show_data[100]);
-        LOGW("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX3   %d", show_data[2000]);
-        LOGW("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX4   %d", show_data[10000]);
-
+        uint32_t* show_data = static_cast<uint32_t*>(out_data);
+        LOGW("AHardwarebuffer data   %d", show_data[0]);
+        LOGW("AHardwarebuffer data   %d", show_data[100]);
+        LOGW("AHardwarebuffer data   %d", show_data[2000]);
+        LOGW("AHardwarebuffer data   %d", show_data[10000]);
         ret = AHardwareBuffer_unlock(hb, NULL);
+        AHardwareBuffer_release(hb);
     }
     AImage_delete(image);
 }
