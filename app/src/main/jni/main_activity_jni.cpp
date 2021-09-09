@@ -615,6 +615,7 @@ AppEngine::AppEngine(android_app* app)
     opt.workspace_vkallocator = blob_vkallocator;
     opt.staging_vkallocator = staging_vkallocator;
     opt.use_vulkan_compute = true;
+    opt.use_image_storage = true;
     this->_network->opt = opt;
 }
 
@@ -734,7 +735,7 @@ void AppEngine::draw_frame(void)
     status = AImage_getFormat(image, &res.format);
     ASSERT(!status, "AppEngine::show_camera AImage_getFormat -> %d", status);
 
-    if(this->_app->window)
+    if (this->_app->window)
     {
         AHardwareBuffer *hb = nullptr;
         AHardwareBuffer_Desc hb_desc;
@@ -744,32 +745,31 @@ void AppEngine::draw_frame(void)
 
         ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
         ncnn::VkR8g8b8a8UnormImageAllocator r8g8b8a8unorm_allocator(this->_vkdev);
-        ncnn::VkImageMat in_img_mat(1920, 1080, 4, 4u, 1, &ahb_im_allocator);
+        ncnn::VkImageMat in_img_mat(this->_img_res.width, this->_img_res.height, 3, 16u, 4, &ahb_im_allocator);
 
-        ncnn::VkMat temp_mat(1920, 1080, 4, 4u, 1, this->_network->opt.blob_vkallocator);
-        ncnn::VkImageMat temp_img_mat;
+//        ncnn::VkMat temp_mat(this->_img_res.width, this->_img_res.height, 3, 4u, 1, this->_network->opt.blob_vkallocator);
+        ncnn::VkImageMat temp_img_mat(this->_img_res.width, this->_img_res.height, 3, 16u, 4, this->_network->opt.blob_vkallocator);
 
-        ncnn::VkImageMat out_img_mat(1080, 1875, 4, 4u, 4, &r8g8b8a8unorm_allocator);
+        ncnn::VkImageMat out_img_mat( this->_native_win_res.width, this->_native_win_res.height, 4, 4u, 4, &r8g8b8a8unorm_allocator);
 
         ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
         ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
-        LOGW("----------------------create import pipeline %d", this->_vkdev->info.support_VK_EXT_queue_family_foreign());
-        import_pipeline.create(&ahb_im_allocator, 1, 1, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
+        LOGW("----------------------create import pipeline");
+        import_pipeline.create(&ahb_im_allocator, 4, 1, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
         LOGW("----------------------create import pipleine done, create convert pipeline");
-        convert_pipline.create(1, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
+        convert_pipline.create(4, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
         LOGW("----------------------create done, begin import");
 
-//        ncnn::Mat c_mat(1920, 1080, 4, 4u, 1);
+        ncnn::Mat c_mat(this->_img_res.width, this->_img_res.height, 4, 16u, 4);
 //        c_mat.fill((float)255.0f);
 //        this->_compute_cmd->record_clone(c_mat, temp_img_mat, this->_network->opt);
 
-        this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_mat);
-        this->_compute_cmd->record_clone(temp_mat, temp_img_mat, this->_network->opt);
+        this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_img_mat);
+        this->_compute_cmd->record_clone(temp_img_mat, c_mat, this->_network->opt);
         LOGW("----------------------import done, begin convert");
-        this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
+//        this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
         this->_compute_cmd->submit_and_wait();
         this->_compute_cmd->reset();
-
         LOGW("----------------------compute done, begin render");
         this->_render_cmd->record_image(out_img_mat);
         this->_render_cmd->render();
@@ -779,7 +779,7 @@ void AppEngine::draw_frame(void)
         AHardwareBuffer_acquire(hb);
         void* out_data = nullptr;
         ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, NULL, &out_data);
-        uint32_t* show_data = static_cast<uint32_t*>(out_data);
+        uint32_t* show_data = static_cast<uint32_t*>(c_mat.data);
         LOGW("----------------------AHardwarebuffer %d", show_data[0]);
         LOGW("----------------------AHardwarebuffer %d", show_data[100]);
         LOGW("----------------------AHardwarebuffer %d", show_data[2000]);
@@ -787,6 +787,7 @@ void AppEngine::draw_frame(void)
         ret = AHardwareBuffer_unlock(hb, NULL);
         AHardwareBuffer_release(hb);
     }
+
     AImage_delete(image);
 }
 
