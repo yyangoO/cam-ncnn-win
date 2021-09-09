@@ -751,46 +751,42 @@ void AppEngine::draw_frame(void)
         ncnn::VkMat temp_mat(1920, 1080, 4, 4u, 1, this->_network->opt.blob_vkallocator);
         ncnn::VkImageMat temp_img_mat;//(1920, 1080, 4, 16U, 4, this->_network->opt.blob_vkallocator);
 
-        ncnn::VkImageMat out_img_mat(1080, 1875, 4, 4U, 4, &r8g8b8a8unorm_allocator);
+        ncnn::VkImageMat out_img_mat(1080, 1875, 4, 4u, 4, &r8g8b8a8unorm_allocator);
 
         ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
         ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
-        LOGW("create import pipeline %d", this->_vkdev->info.support_VK_EXT_queue_family_foreign());
+        LOGW("----------------------create import pipeline %d----------------------", this->_vkdev->info.support_VK_EXT_queue_family_foreign());
         import_pipeline.create(&ahb_im_allocator, 1, 1, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
-        LOGW("create import pipleine done, create convert pipeline");
+        LOGW("----------------------create import pipleine done, create convert pipeline----------------------");
         convert_pipline.create(1, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
-        LOGW("create done, begin import");
+        LOGW("----------------------create done, begin import----------------------");
 
-//        ncnn::Mat c_mat;
 //        ncnn::Mat c_mat(1920, 1080, 4, 16U, 4);
-//        if (!this->_vkdev->info.support_VK_EXT_queue_family_foreign())
-//            c_mat.fill((float)255.0f);
-//        else
-//            c_mat.fill((float)0.0f);
+//        c_mat.fill((float)255.0f);
 //        this->_compute_cmd->record_clone(c_mat, temp_img_mat, this->_network->opt);
 
         this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_mat);
         this->_compute_cmd->record_clone(temp_mat, temp_img_mat, this->_network->opt);
-        LOGW("import done, begin convert");
+        LOGW("----------------------import done, begin convert----------------------");
         this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
         this->_compute_cmd->submit_and_wait();
         this->_compute_cmd->reset();
 
-        LOGW("compute done, begin render");
+        LOGW("----------------------compute done, begin render----------------------");
         this->_render_cmd->record_image(out_img_mat);
         this->_render_cmd->render();
         this->_render_cmd->reset();
-        LOGW("render done");
+        LOGW("----------------------render done----------------------");
 
 
         AHardwareBuffer_acquire(hb);
         void* out_data = nullptr;
         ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, NULL, &out_data);
         uint32_t* show_data = static_cast<uint32_t*>(out_data);
-        LOGW("AHardwarebuffer data   %d", show_data[0]);
-        LOGW("AHardwarebuffer data   %d", show_data[100]);
-        LOGW("AHardwarebuffer data   %d", show_data[2000]);
-        LOGW("AHardwarebuffer data   %d", show_data[10000]);
+        LOGW("----------------------AHardwarebuffer data   %d----------------------", show_data[0]);
+        LOGW("----------------------AHardwarebuffer data   %d----------------------", show_data[100]);
+        LOGW("----------------------AHardwarebuffer data   %d----------------------", show_data[2000]);
+        LOGW("----------------------AHardwarebuffer data   %d----------------------", show_data[10000]);
         ret = AHardwareBuffer_unlock(hb, NULL);
         AHardwareBuffer_release(hb);
     }
