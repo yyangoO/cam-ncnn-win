@@ -4,6 +4,7 @@
 
 #include <android/log.h>
 #include <android_native_app_glue.h>
+#include <android/hardware_buffer.h>
 #include <android/native_window.h>
 #include <android/asset_manager_jni.h>
 #include <android/log.h>

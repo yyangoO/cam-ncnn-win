@@ -498,7 +498,14 @@ void NDKCamera::init_img(ImageFormat res)
 {
     media_status_t status = AMEDIA_OK;
 
-    status = AImageReader_new(res.width, res.height, AIMAGE_FORMAT_YUV_420_888, MAX_BUF_COUNT, &this->_reader);
+    status = AImageReader_newWithUsage(res.width,
+                                       res.height,
+                                       AIMAGE_FORMAT_YUV_420_888,
+                                       AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
+                                       AHARDWAREBUFFER_USAGE_CPU_READ_MASK |
+                                       AHARDWAREBUFFER_USAGE_CPU_WRITE_MASK,
+                                       MAX_BUF_COUNT,
+                                       &this->_reader);
     ASSERT(!status, "NDKCamera::init_img AImageReader_new -> %d", status);
 
     AImageReader_ImageListener listener{.context = this, .onImageAvailable = on_image_callback,};
@@ -610,13 +617,13 @@ AppEngine::AppEngine(android_app* app)
     ncnn::VkAllocator* blob_vkallocator = this->_vkdev->acquire_blob_allocator();
     ncnn::VkAllocator* staging_vkallocator = this->_vkdev->acquire_staging_allocator();
     ncnn::Option opt;
-    opt.num_threads = 4;
     opt.blob_vkallocator = blob_vkallocator;
     opt.workspace_vkallocator = blob_vkallocator;
     opt.staging_vkallocator = staging_vkallocator;
     opt.use_vulkan_compute = true;
     opt.use_image_storage = true;
     this->_network->opt = opt;
+    LOGW("ncnn gpu instance created!");
 }
 
 struct android_app* AppEngine::interface_2_android_app(void) const
@@ -735,49 +742,47 @@ void AppEngine::draw_frame(void)
     status = AImage_getFormat(image, &res.format);
     ASSERT(!status, "AppEngine::show_camera AImage_getFormat -> %d", status);
 
+    AHardwareBuffer *hb = nullptr;
+    status = AImage_getHardwareBuffer(image, &hb);
+    ASSERT(!status, "AppEngine::draw_frame AImage_getHardwareBuffer -> %d", status);
+
     if (this->_app->window)
     {
-        AHardwareBuffer *hb = nullptr;
-        AHardwareBuffer_Desc hb_desc;
-
-        status = AImage_getHardwareBuffer(image, &hb);
-        ASSERT(!status, "AppEngine::draw_frame AImage_getHardwareBuffer -> %d", status);
-
         ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
         ncnn::VkR8g8b8a8UnormImageAllocator r8g8b8a8unorm_allocator(this->_vkdev);
-        ncnn::VkImageMat in_img_mat(this->_img_res.width, this->_img_res.height, 4, 16u, 4, &ahb_im_allocator);
-//        in_img_mat.from_android_hardware_buffer(&ahb_im_allocator);
 
-        ncnn::VkImageMat temp_img_mat(this->_img_res.width, this->_img_res.height, 4, 16u, 4, this->_network->opt.blob_vkallocator);
+        ncnn::VkImageMat in_img_mat;
+        in_img_mat.from_android_hardware_buffer(&ahb_im_allocator);
 
-        ncnn::VkImageMat out_img_mat( this->_native_win_res.width, this->_native_win_res.height, 4, 4u, 4, &r8g8b8a8unorm_allocator);
-
-        ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
-        ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
-        import_pipeline.create(&ahb_im_allocator, 4, 1, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
-        convert_pipline.create(4, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
+//        ncnn::VkImageMat temp_img_mat(this->_img_res.width, this->_img_res.height, 4, 16u, 4, this->_network->opt.blob_vkallocator);
+//
+//        ncnn::VkImageMat out_img_mat( this->_native_win_res.width, this->_native_win_res.height, 4, 4u, 4, &r8g8b8a8unorm_allocator);
+//
+//        ncnn::ImportAndroidHardwareBufferPipeline import_pipeline(this->_vkdev);
+//        ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
+//        import_pipeline.create(&ahb_im_allocator, 4, 5, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
+//        convert_pipline.create(4, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
 
 //        ncnn::Mat c_mat(this->_img_res.width, this->_img_res.height, 4, 16u, 4);
 //        c_mat.fill((float)255.0f);
 //        this->_compute_cmd->record_clone(c_mat, temp_img_mat, this->_network->opt);
 
-        this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_img_mat);
-        this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
-        this->_compute_cmd->submit_and_wait();
-        this->_compute_cmd->reset();
-
-        this->_render_cmd->record_image(out_img_mat);
-        this->_render_cmd->render();
-        this->_render_cmd->reset();
+//        this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_img_mat);
+//        this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
+//        this->_compute_cmd->submit_and_wait();
+//        this->_compute_cmd->reset();
+//
+//        this->_render_cmd->record_image(out_img_mat);
+//        this->_render_cmd->render();
+//        this->_render_cmd->reset();
 
 //        AHardwareBuffer_acquire(hb);
 //        void* out_data = nullptr;
 //        ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, NULL, &out_data);
 //        uint32_t* show_data = static_cast<uint32_t*>(out_data);
-//        LOGW("----------------------AHardwarebuffer %d", show_data[0]);
-//        LOGW("----------------------AHardwarebuffer %d", show_data[100]);
-//        LOGW("----------------------AHardwarebuffer %d", show_data[2000]);
-//        LOGW("----------------------AHardwarebuffer %d", show_data[10000]);
+//        LOGW("AAAAAAAAAAAAAAAAAAAAAAAHardwarebuffer %d", show_data[0]);
+//        LOGW("AAAAAAAAAAAAAAAAAAAAAAAHardwarebuffer %d", show_data[100]);
+//        LOGW("AAAAAAAAAAAAAAAAAAAAAAAHardwarebuffer %d", show_data[2000]);
 //        ret = AHardwareBuffer_unlock(hb, NULL);
 //        AHardwareBuffer_release(hb);
     }
@@ -897,7 +902,7 @@ AppEngine* get_app_engine(void)
     return p_engine_obj;
 }
 
-static void ProcessAndroidCmd(struct android_app* app, int32_t cmd)
+static void process_android_cmd(struct android_app* app, int32_t cmd)
 {
     AppEngine* engine = reinterpret_cast<AppEngine*>(app->userData);
     switch (cmd)
@@ -935,7 +940,7 @@ void android_main(struct android_app* app)
     p_engine_obj = &engine;
 
     app->userData = reinterpret_cast<void*>(&engine);
-    app->onAppCmd = ProcessAndroidCmd;
+    app->onAppCmd = process_android_cmd;
 
     while (1)
     {
