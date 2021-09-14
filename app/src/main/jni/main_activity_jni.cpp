@@ -715,7 +715,6 @@ void AppEngine::draw_frame(void)
     {
         return;
     }
-
     if (!this->_cam_ready_flag)
     {
         return;
@@ -727,7 +726,6 @@ void AppEngine::draw_frame(void)
     AImage* image = nullptr;
     ImageFormat res;
     image = this->_cam->get_next_img();
-
     if (image == nullptr)
     {
         return;
@@ -735,19 +733,39 @@ void AppEngine::draw_frame(void)
 
     status = AImage_getWidth(image, &res.width);
     ASSERT(!status, "AppEngine::show_camera AImage_getWidth -> %d", status);
-
     status = AImage_getHeight(image, &res.height);
     ASSERT(!status, "AppEngine::show_camera AImage_getHeight -> %d", status);
-
     status = AImage_getFormat(image, &res.format);
     ASSERT(!status, "AppEngine::show_camera AImage_getFormat -> %d", status);
 
     AHardwareBuffer *hb = nullptr;
-    status = AImage_getHardwareBuffer(image, &hb);
-    ASSERT(!status, "AppEngine::draw_frame AImage_getHardwareBuffer -> %d", status);
+    AHardwareBuffer_Desc hb_desc;
+//    status = AImage_getHardwareBuffer(image, &hb);
+//    ASSERT(!status, "AppEngine::draw_frame AImage_getHardwareBuffer -> %d", status);
+
+
+    void* bk_img = malloc(this->_img_res.width * this->_img_res.height * 3 / 2);
+    uint8_t* bk_data = static_cast<uint8_t*>(bk_img);
+    for (int i = 0; i < this->_img_res.width * this->_img_res.height * 3 / 2; i++)
+        bk_data[i] = 0xff;
+
+    hb_desc.width = this->_img_res.width;
+    hb_desc.height = this->_img_res.height;
+    hb_desc.format = AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420;
+    hb_desc.rfu0 = 0;
+    hb_desc.rfu1 = 0;
+    hb_desc.layers = 1;
+    hb_desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN | AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+    ret = AHardwareBuffer_allocate(&hb_desc, &hb);
+
+    void* data;
+    ret = AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN, -1, NULL, &data);
+    memcpy(data, bk_img, this->_img_res.width * this->_img_res.height * 3 / 2);
+    ret = AHardwareBuffer_unlock(hb, NULL);
 
     if (this->_app->window)
     {
+        AHardwareBuffer_acquire(hb);
         ncnn::VkAndroidHardwareBufferImageAllocator ahb_im_allocator(this->_vkdev, hb);
         ncnn::VkR8g8b8a8UnormImageAllocator r8g8b8a8unorm_allocator(this->_vkdev);
 
@@ -762,7 +780,7 @@ void AppEngine::draw_frame(void)
 //        ncnn::Convert2R8g8b8a8UnormPipeline convert_pipline(this->_vkdev);
 //        import_pipeline.create(&ahb_im_allocator, 4, 5, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
 //        convert_pipline.create(4, 1, this->_img_res.width, this->_img_res.height, this->_native_win_res.width, this->_native_win_res.height, this->_network->opt);
-
+//
 //        this->_compute_cmd->record_import_android_hardware_buffer(&import_pipeline, in_img_mat, temp_img_mat);
 //        this->_compute_cmd->record_convert2_r8g8b8a8_image(&convert_pipline, temp_img_mat, out_img_mat);
 //        this->_compute_cmd->submit_and_wait();
@@ -780,7 +798,7 @@ void AppEngine::draw_frame(void)
 //        LOGW("AAAAAAAAAAAAAAAAAAAAAAAHardwarebuffer %d", show_data[100]);
 //        LOGW("AAAAAAAAAAAAAAAAAAAAAAAHardwarebuffer %d", show_data[2000]);
 //        ret = AHardwareBuffer_unlock(hb, NULL);
-//        AHardwareBuffer_release(hb);
+        AHardwareBuffer_release(hb);
     }
 
     AImage_delete(image);
